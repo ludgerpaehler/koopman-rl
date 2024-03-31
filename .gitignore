@@ -137,3 +137,6 @@ venv.bak/
 
 # Saved data files
 **/*.csv
+
+# Video stuffs
+video_frames/
