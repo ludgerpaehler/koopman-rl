@@ -139,4 +139,4 @@ venv.bak/
 **/*.csv
 
 # Video stuffs
-video_frames/
+video_frames**/
