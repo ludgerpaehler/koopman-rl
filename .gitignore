@@ -141,3 +141,4 @@ venv.bak/
 
 # Video stuffs
 video_frames**/
+**/*.gif
