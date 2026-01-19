@@ -37,7 +37,7 @@ include = [
 ]
 dependencies = [
     "control>=0.10.2",
-    "gym==0.23.1",
+    "gymnasium>=1.2.3",
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
     "optuna>=3.0.0",
