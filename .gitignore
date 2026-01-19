@@ -6,3 +6,6 @@ tuning/__pycache__/
 # Ignore simulation results
 runs/
 saved_models/
+
+# Ignore pycaches
+src/koopmanrl/__pycache__/
