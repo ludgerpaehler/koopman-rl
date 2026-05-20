@@ -568,7 +568,7 @@ source = { editable = "." }
 dependencies = [
     { name = "cleanrl" },
     { name = "control" },
-    { name = "gym" },
+    { name = "gymnasium" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "optuna" },
@@ -591,7 +591,7 @@ dev = [
 requires-dist = [
     { name = "cleanrl", specifier = ">=1.2.0" },
     { name = "control", specifier = ">=0.10.2" },
-    { name = "gym", specifier = "==0.23.1" },
+    { name = "gymnasium", specifier = ">=1.0.0" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "optuna", specifier = ">=3.0.0" },

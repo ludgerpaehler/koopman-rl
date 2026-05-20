@@ -1,4 +1,4 @@
-import gym
+import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
@@ -45,11 +45,11 @@ def main():
             line.set_3d_properties([])
             return (line,)
 
-    state = env.reset()
+    state, _ = env.reset(seed=args.seed)
     states = [state]
 
     def animate(i):
-        next_state, _, _, _ = env.step(np.array([0]))
+        next_state, _, _, _, _ = env.step(np.array([0]))
         states.append(next_state)
         line.set_data(np.array(states)[:, 0], np.array(states)[:, 1])
         if is_3d_env:

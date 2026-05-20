@@ -2,7 +2,8 @@ import os
 import random
 import time
 
-import gym
+import gym as legacy_gym
+import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,7 +15,7 @@ from tap import Tap
 from torch.utils.tensorboard import SummaryWriter
 
 from koopmanrl.environments import DoubleWell, FluidFlow, LinearSystem, Lorenz
-from koopmanrl.utils import create_folder, make_env
+from koopmanrl.utils import create_folder, make_env, vector_infos_to_list
 
 torch.set_default_dtype(torch.float64)
 LOG_STD_MAX = 2
@@ -141,19 +142,30 @@ def main():
     else:
         alpha = args.alpha
 
-    # envs.single_observation_space.dtype = np.float32
-    envs.single_observation_space.dtype = np.float64
+    # Stable-Baselines3 1.2 expects legacy gym Box spaces (float32).
+    rb_observation_space = legacy_gym.spaces.Box(
+        low=envs.single_observation_space.low,
+        high=envs.single_observation_space.high,
+        shape=envs.single_observation_space.shape,
+        dtype=np.float32,
+    )
+    rb_action_space = legacy_gym.spaces.Box(
+        low=envs.single_action_space.low,
+        high=envs.single_action_space.high,
+        shape=envs.single_action_space.shape,
+        dtype=np.float32,
+    )
     rb = ReplayBuffer(
         args.buffer_size,
-        envs.single_observation_space,
-        envs.single_action_space,
+        rb_observation_space,
+        rb_action_space,
         device,
         handle_timeout_termination=True,
     )
     start_time = time.time()
 
     # TRY NOT TO MODIFY: start the game
-    obs = envs.reset()
+    obs, _ = envs.reset()
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
@@ -163,22 +175,30 @@ def main():
             actions = actions.detach().cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, dones, infos = envs.step(actions)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        dones = terminations | truncations
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        for info in infos:
-            if "episode" in info.keys():
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
-                break
+        if "episode" in infos:
+            ep_return = infos["episode"]["r"]
+            ep_length = infos["episode"]["l"]
+            if hasattr(ep_return, "item"):
+                ep_return = ep_return.item()
+            if hasattr(ep_length, "item"):
+                ep_length = ep_length.item()
+            print(f"global_step={global_step}, episodic_return={ep_return}")
+            writer.add_scalar("charts/episodic_return", ep_return, global_step)
+            writer.add_scalar("charts/episodic_length", ep_length, global_step)
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `terminal_observation`
         real_next_obs = next_obs.copy()
-        for idx, d in enumerate(dones):
-            if d:
-                real_next_obs[idx] = infos[idx]["terminal_observation"]
-        rb.add(obs, real_next_obs, actions, rewards, dones, infos)
+        if "final_observation" in infos:
+            final_obs = infos["final_observation"]
+            for idx, d in enumerate(dones):
+                if d:
+                    real_next_obs[idx] = final_obs[idx]
+        infos_list = vector_infos_to_list(infos, envs.num_envs)
+        rb.add(obs, real_next_obs, actions, rewards, dones, infos_list)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs

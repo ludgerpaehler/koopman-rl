@@ -1,10 +1,10 @@
-from typing import Optional
+from typing import Any, Optional
 
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
-from gym import spaces
-from gym.envs.registration import register
+from gymnasium import spaces
+from gymnasium.envs.registration import register
 from scipy.integrate import solve_ivp
 
 dt = 0.01
@@ -69,17 +69,15 @@ class FluidFlow(gym.Env):
         )
 
         # History of states traversed during the current episode
-        self.states = []
+        self.states: list[np.ndarray] = []
 
-    def reset(self, state=None, seed: Optional[int] = None):
-        # We need the following line to seed self.np_random
-        # Not sure if this will work for any environments that depend on PyTorch
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
         super().reset(seed=seed)
 
-        # Choose the initial state uniformly at random
+        options = options or {}
+        state = options.get("state")
         if state is None:
-            # self.state = self.observation_space.sample()
-            self.state = np.random.uniform(
+            self.state = self.np_random.uniform(
                 low=self.state_minimums,
                 high=self.state_maximums,
                 size=(self.state_dim,),
@@ -91,8 +89,7 @@ class FluidFlow(gym.Env):
         # Track number of steps taken
         self.step_count = 0
 
-        # return self.state, {}
-        return self.state
+        return self.state, {}
 
     def cost_fn(self, state, action):
         _state = state - self.reference_point
@@ -181,5 +178,4 @@ class FluidFlow(gym.Env):
         # An episode is done if the system has run for max_episode_steps
         terminated = self.step_count >= max_episode_steps
 
-        # return self.state, reward, terminated, False, {}
-        return self.state, reward, terminated, {}
+        return self.state, reward, terminated, False, {}

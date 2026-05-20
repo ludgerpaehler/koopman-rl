@@ -19,7 +19,7 @@ environments/
 
 All four environments follow two guiding principles:
 
-* All environments follow the legacy `gym` standard
+* All environments follow the `gymnasium` API standard
 * Environments are allowed to run with FP64, and are run on CPU
 
 ## Working Checklist
