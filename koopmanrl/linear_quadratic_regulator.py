@@ -237,7 +237,6 @@ def main():
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        dones = terminations | truncations
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "episode" in infos:

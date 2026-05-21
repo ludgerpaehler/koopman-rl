@@ -125,7 +125,6 @@ def skvi_tuning_wrapper(
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, terminations, truncations, info = envs.step(actions)
-        dones = terminations | truncations
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "episode" in info:
