@@ -1,10 +1,10 @@
-from typing import Optional
+from typing import Any, Optional
 
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
-from gym import spaces
-from gym.envs.registration import register
+from gymnasium import spaces
+from gymnasium.envs.registration import register
 
 dt = 0.01
 max_episode_steps = int(20 / dt)
@@ -53,7 +53,7 @@ class DoubleWell(gym.Env):
         )
 
         # History of states traversed during the current episode
-        self.states = []
+        self.states: list[np.ndarray] = []
 
     def potential(self, X=None, Y=None, U=0):
         if X is not None and Y is not None:
@@ -61,24 +61,21 @@ class DoubleWell(gym.Env):
 
         return (self.state[0] ** 2 - 1) ** 2 + self.state[1] ** 2 + U * self.state[0] + U * self.state[1]
 
-    def reset(self, seed: Optional[int] = None):
-        # We need the following line to seed self.np_random
-        # Not sure if this will work for any environments that depend on PyTorch
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
         super().reset(seed=seed)
 
         # Choose the initial state uniformly at random
-        self.state = np.random.uniform(low=self.state_minimums, high=self.state_maximums, size=(self.state_dim,))
+        self.state = self.np_random.uniform(low=self.state_minimums, high=self.state_maximums, size=(self.state_dim,))
         self.states = [self.state]
         self.potentials = [self.potential()]
 
         # Generating randomness up front with a lot of buffer room
-        self.random_draws = np.random.normal(loc=0, scale=1, size=(self.max_episode_steps * 10, 2, 1))
+        self.random_draws = self.np_random.normal(loc=0, scale=1, size=(self.max_episode_steps * 10, 2, 1))
 
         # Track number of steps taken
         self.step_count = 0
 
-        # return self.state, {}
-        return self.state
+        return self.state, {}
 
     def cost_fn(self, state, action):
         _state = state - self.reference_point
@@ -172,5 +169,4 @@ class DoubleWell(gym.Env):
         # An episode is done if the system has run for max_episode_steps
         terminated = self.step_count >= max_episode_steps
 
-        # return self.state, reward, terminated, False, {}
-        return self.state, reward, terminated, {}
+        return self.state, reward, terminated, False, {}

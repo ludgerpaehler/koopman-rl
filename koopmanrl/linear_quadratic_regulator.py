@@ -1,7 +1,7 @@
 import os
 import time
 
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
 from control import dlqr, lqr
@@ -189,9 +189,11 @@ def main():
         [make_env(args.env_id, seed=sampled_seed, idx=0, capture_video=False, run_name=run_name)]
     )
 
+    base_env = envs.envs[0].unwrapped
     try:
-        dt = envs.envs[0].dt
+        dt = base_env.dt
     except Exception:
+        dt = None
         dt = None
 
     # Construct LQR policy
@@ -199,11 +201,11 @@ def main():
     is_continuous = False if args.env_id in discrete_systems else True
     try:
         lqr_policy = LQRPolicy(
-            A=envs.envs[0].continuous_A,
-            B=envs.envs[0].continuous_B,
-            Q=envs.envs[0].Q,
-            R=envs.envs[0].R,
-            reference_point=envs.envs[0].reference_point,
+            A=base_env.continuous_A,
+            B=base_env.continuous_B,
+            Q=base_env.Q,
+            R=base_env.R,
+            reference_point=base_env.reference_point,
             gamma=args.gamma,
             alpha=args.alpha,
             dt=dt,
@@ -212,11 +214,11 @@ def main():
         )
     except Exception:
         lqr_policy = LQRPolicy(
-            A=envs.envs[0].A,
-            B=envs.envs[0].B,
-            Q=envs.envs[0].Q,
-            R=envs.envs[0].R,
-            reference_point=envs.envs[0].reference_point,
+            A=base_env.A,
+            B=base_env.B,
+            Q=base_env.Q,
+            R=base_env.R,
+            reference_point=base_env.reference_point,
             gamma=args.gamma,
             alpha=args.alpha,
             dt=dt,
@@ -228,21 +230,26 @@ def main():
     start_time = time.time()
 
     # TRY NOT TO MODIFY: start the game
-    obs = envs.reset()
+    obs, _ = envs.reset()
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: put action logic here
         actions = lqr_policy.get_action(obs.T)
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, dones, infos = envs.step(actions)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        dones = terminations | truncations
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        for info in infos:
-            if "episode" in info.keys():
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
-                break
+        if "episode" in infos:
+            ep_return = infos["episode"]["r"]
+            ep_length = infos["episode"]["l"]
+            if hasattr(ep_return, "item"):
+                ep_return = ep_return.item()
+            if hasattr(ep_length, "item"):
+                ep_length = ep_length.item()
+            print(f"global_step={global_step}, episodic_return={ep_return}")
+            writer.add_scalar("charts/episodic_return", ep_return, global_step)
+            writer.add_scalar("charts/episodic_length", ep_length, global_step)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs

@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any
 
-import gym
+import gymnasium as gym
 
 
 def load_and_apply_config(
@@ -83,9 +83,31 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env.seed(seed)
+        env.reset(seed=seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
         return env
 
     return thunk
+
+def vector_infos_to_list(infos, num_envs):
+    """Convert Gymnasium vector-env info dicts to a per-env list for SB3."""
+    list_of_infos = [{} for _ in range(num_envs)]
+    for key, value in infos.items():
+        if key == "episode" and isinstance(value, dict):
+            for i in range(num_envs):
+                list_of_infos[i][key] = {
+                    sub_key: (sub_value[i] if hasattr(sub_value, "__getitem__") else sub_value)
+                    for sub_key, sub_value in value.items()
+                }
+        elif isinstance(value, (list, tuple)):
+            for i in range(num_envs):
+                list_of_infos[i][key] = value[i]
+        elif hasattr(value, "__getitem__") and hasattr(value, "__len__") and len(value) == num_envs:
+            for i in range(num_envs):
+                list_of_infos[i][key] = value[i]
+        else:
+            for i in range(num_envs):
+                list_of_infos[i][key] = value
+    return list_of_infos
+

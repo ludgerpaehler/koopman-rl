@@ -1,10 +1,10 @@
-from typing import Optional
+from typing import Any, Optional
 
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
-from gym import spaces
-from gym.envs.registration import register
+from gymnasium import spaces
+from gymnasium.envs.registration import register
 
 max_episode_steps = 200
 
@@ -59,23 +59,19 @@ class LinearSystem(gym.Env):
         )
 
         # History of states traversed during the current episode
-        self.states = []
+        self.states: list[np.ndarray] = []
 
-    def reset(self, seed: Optional[int] = None):
-        # We need the following line to seed self.np_random
-        # Not sure if this will work for any environments that depend on PyTorch
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
         super().reset(seed=seed)
 
         # Choose the initial state uniformly at random
-        # self.state = self.observation_space.sample()
-        self.state = np.random.uniform(low=self.state_minimums, high=self.state_maximums, size=(self.state_dim,))
+        self.state = self.np_random.uniform(low=self.state_minimums, high=self.state_maximums, size=(self.state_dim,))
         self.states = [self.state]
 
         # Track number of steps taken
         self.step_count = 0
 
-        # return self.state, {}
-        return self.state
+        return self.state, {}
 
     def cost_fn(self, state, action):
         _state = state - self.reference_point
@@ -129,5 +125,4 @@ class LinearSystem(gym.Env):
         # An episode is done if the system has run for max_episode_steps
         terminated = self.step_count >= max_episode_steps
 
-        # return self.state, reward, terminated, False, {}
-        return self.state, reward, terminated, {}
+        return self.state, reward, terminated, False, {}

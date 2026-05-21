@@ -1,4 +1,4 @@
-import gym
+import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -51,13 +51,13 @@ def main():
     U = torch.zeros((args.num_paths, args.num_steps_per_path, action_dim))
 
     for path_num in range(args.num_paths):
-        state = env.reset()
+        state, _ = env.reset()
         # state = env.reset(seed=args.seed)
         for step_num in range(args.num_steps_per_path):
             X[path_num, step_num] = torch.tensor(state)
             action = env.action_space.sample()
             U[path_num, step_num] = torch.tensor(action)
-            state, _, _, _ = env.step(action)
+            state, _, _, _, _ = env.step(action)
             Y[path_num, step_num] = torch.tensor(state)
 
     """ Make sure trajectories look ok """

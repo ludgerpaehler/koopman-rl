@@ -33,7 +33,7 @@ class Generator:
             costs_per_trajectory = []
 
             # Reset environment and get initial state
-            state = self.envs.reset()
+            state, _ = self.envs.reset()
 
             # Get initial action and cost for initial state
             action = np.array([[0]])  # Initial action is no action
@@ -79,7 +79,8 @@ class Generator:
             while check_loop_condition() is False:
                 # Get action from policy and get new state
                 action = self.policy.get_action(state)  # Expected to be shape of (1, 1)
-                new_state, reward, dones, _ = self.envs.step(action)
+                new_state, reward, terminations, truncations, _ = self.envs.step(action)
+                dones = terminations | truncations
 
                 # Print progress
                 if (step_num + 1) % 100 == 0:
