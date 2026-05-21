@@ -16,7 +16,7 @@ Example usage:
 import os
 from typing import Optional
 
-import gym
+import gymnasium as gym
 import imageio.v2 as imageio
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -68,7 +68,7 @@ def make_env(env_id: str, seed: int):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.seed(seed)
+        env.reset(seed=seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
         return env

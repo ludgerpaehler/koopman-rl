@@ -1,7 +1,8 @@
 import random
 import time
 
-import gym
+import gym as legacy_gym
+import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -18,7 +19,7 @@ from koopmanrl.soft_koopman_value_iteration import (
     DiscreteKoopmanValueIterationPolicy,
     generate_koopman_tensor,
 )
-from koopmanrl.utils import make_env
+from koopmanrl.utils import make_env, vector_infos_to_list
 
 
 def skvi_tuning_wrapper(
@@ -77,7 +78,7 @@ def skvi_tuning_wrapper(
     )
 
     try:
-        dt = envs.envs[0].dt
+        dt = envs.envs[0].unwrapped.dt
     except Exception:
         dt = None
 
@@ -97,7 +98,7 @@ def skvi_tuning_wrapper(
         alpha=alpha,
         dynamics_model=koopman_tensor,
         all_actions=all_actions,
-        cost=envs.envs[0].vectorized_cost_fn,
+        cost=envs.envs[0].unwrapped.vectorized_cost_fn,
         use_ols=True,
         learning_rate=learning_rate,
         seed=seed,
@@ -116,21 +117,26 @@ def skvi_tuning_wrapper(
     start_time = time.time()
 
     # TRY NOT TO MODIFY: start the game
-    obs = envs.reset()
+    obs, _ = envs.reset()
     for global_step in range(total_timesteps):
         # ALGO LOGIC: put action logic here
         actions = value_iteration_policy.get_action(torch.Tensor(obs).to(device))
         actions = actions.detach().cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, dones, info = envs.step(actions)
+        next_obs, rewards, terminations, truncations, info = envs.step(actions)
+        dones = terminations | truncations
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        for item in info:
-            if "episode" in item.keys():
-                episodic_returns_list.append([item["episode"]["r"], global_step])
-                episodic_lengths_list.append([item["episode"]["l"], global_step])
-                break
+        if "episode" in info:
+            ep_return = info["episode"]["r"]
+            ep_length = info["episode"]["l"]
+            if hasattr(ep_return, "item"):
+                ep_return = ep_return.item()
+            if hasattr(ep_length, "item"):
+                ep_length = ep_length.item()
+            episodic_returns_list.append([ep_return, global_step])
+            episodic_lengths_list.append([ep_length, global_step])
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
@@ -139,7 +145,7 @@ def skvi_tuning_wrapper(
         if global_step % 100 == 0:
             steps_per_seconds_list.append([int(global_step / (time.time() - start_time)), global_step])
 
-    # Close the gym environment
+    # Close the Gymnasium environment
     envs.close()
 
     # Return outputs for the hyperparameter optimization
@@ -247,19 +253,29 @@ def sakc_tuning_wrapper(
     else:
         alpha = alpha
 
-    # envs.single_observation_space.dtype = np.float32
-    envs.single_observation_space.dtype = np.float64
+    rb_observation_space = legacy_gym.spaces.Box(
+        low=envs.single_observation_space.low,
+        high=envs.single_observation_space.high,
+        shape=envs.single_observation_space.shape,
+        dtype=np.float32,
+    )
+    rb_action_space = legacy_gym.spaces.Box(
+        low=envs.single_action_space.low,
+        high=envs.single_action_space.high,
+        shape=envs.single_action_space.shape,
+        dtype=np.float32,
+    )
     rb = ReplayBuffer(
         buffer_size,
-        envs.single_observation_space,
-        envs.single_action_space,
+        rb_observation_space,
+        rb_action_space,
         device,
         handle_timeout_termination=True,
     )
     start_time = time.time()
 
     # TRY NOT TO MODIFY: start the game
-    obs = envs.reset()
+    obs, _ = envs.reset()
     for global_step in range(total_timesteps):
         # ALGO LOGIC: put action logic here
         if global_step < learning_starts:
@@ -269,23 +285,31 @@ def sakc_tuning_wrapper(
             actions = actions.detach().cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, dones, infos = envs.step(actions)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        dones = terminations | truncations
 
         # print(infos)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        for item in infos:
-            if "episode" in item.keys():
-                episodic_returns_list.append([item["episode"]["r"], global_step])
-                episodic_lengths_list.append([item["episode"]["l"], global_step])
-                break
+        if "episode" in infos:
+            ep_return = infos["episode"]["r"]
+            ep_length = infos["episode"]["l"]
+            if hasattr(ep_return, "item"):
+                ep_return = ep_return.item()
+            if hasattr(ep_length, "item"):
+                ep_length = ep_length.item()
+            episodic_returns_list.append([ep_return, global_step])
+            episodic_lengths_list.append([ep_length, global_step])
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `terminal_observation`
         real_next_obs = next_obs.copy()
-        for idx, d in enumerate(dones):
-            if d:
-                real_next_obs[idx] = infos[idx]["terminal_observation"]
-        rb.add(obs, real_next_obs, actions, rewards, dones, infos)
+        if "final_observation" in infos:
+            final_obs = infos["final_observation"]
+            for idx, d in enumerate(dones):
+                if d:
+                    real_next_obs[idx] = final_obs[idx]
+        infos_list = vector_infos_to_list(infos, envs.num_envs)
+        rb.add(obs, real_next_obs, actions, rewards, dones, infos_list)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs

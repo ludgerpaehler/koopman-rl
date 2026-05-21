@@ -2,7 +2,7 @@ import os
 import random
 import time
 
-import gym
+import gymnasium as gym
 import numpy as np
 import torch
 from analysis.utils import create_folder
@@ -506,7 +506,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env.seed(seed)
+        env.reset(seed=seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
         return env
@@ -537,7 +537,7 @@ def main():
     koopman_tensor = load_tensor(args.env_id, "path_based_tensor")
 
     try:
-        dt = envs.envs[0].dt
+        dt = envs.envs[0].unwrapped.dt
     except Exception:
         dt = None
 
@@ -566,7 +566,7 @@ def main():
         alpha=args.alpha,
         dynamics_model=koopman_tensor,
         all_actions=all_actions,
-        cost=envs.envs[0].vectorized_cost_fn,
+        cost=envs.envs[0].unwrapped.vectorized_cost_fn,
         use_ols=True,
         learning_rate=args.lr,
         dt=dt,
@@ -579,22 +579,27 @@ def main():
     start_time = time.time()
 
     # TRY NOT TO MODIFY: start the game
-    obs = envs.reset()
+    obs, _ = envs.reset()
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: put action logic here
         actions = value_iteration_policy.get_action(torch.Tensor(obs).to(device))
         actions = actions.detach().cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, dones, infos = envs.step(actions)
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        dones = terminations | truncations
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        for info in infos:
-            if "episode" in info.keys():
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
-                break
+        if "episode" in infos:
+            ep_return = infos["episode"]["r"]
+            ep_length = infos["episode"]["l"]
+            if hasattr(ep_return, "item"):
+                ep_return = ep_return.item()
+            if hasattr(ep_length, "item"):
+                ep_length = ep_length.item()
+            print(f"global_step={global_step}, episodic_return={ep_return}")
+            writer.add_scalar("charts/episodic_return", ep_return, global_step)
+            writer.add_scalar("charts/episodic_length", ep_length, global_step)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs

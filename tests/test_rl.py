@@ -38,6 +38,7 @@ def test_skvi(env_id):
     result = run_module(
         "koopmanrl.soft_koopman_value_iteration",
         [f"--env_id={env_id}", f"--total_timesteps={TOTAL_TIMESTEPS}"],
+        timeout=600,
     )
     assert result.returncode == 0, result.stderr
 
