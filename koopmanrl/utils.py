@@ -90,6 +90,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
     return thunk
 
+
 def vector_infos_to_list(infos, num_envs):
     """Convert Gymnasium vector-env info dicts to a per-env list for SB3."""
     list_of_infos = [{} for _ in range(num_envs)]
@@ -110,4 +111,3 @@ def vector_infos_to_list(infos, num_envs):
             for i in range(num_envs):
                 list_of_infos[i][key] = value
     return list_of_infos
-
