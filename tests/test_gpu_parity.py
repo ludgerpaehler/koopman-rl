@@ -1,5 +1,8 @@
 import pytest
 import torch
+import gymnasium as gym
+import numpy as np
+import koopmanrl.environments  # noqa: F401
 
 from koopmanrl.koopman_tensor.observables.torch_observables import monomials
 
@@ -46,3 +49,37 @@ def test_koopman_tensor_cpu_gpu_parity():
     f_cpu = kt_cpu.f(x, u)
     f_gpu = kt_gpu.f(x.cuda(), u.cuda())
     assert torch.allclose(f_cpu, f_gpu.cpu(), atol=1e-6)
+
+
+def test_linear_system_f_batch_matches_numpy_cpu():
+    env = gym.make("LinearSystem-v0").unwrapped
+    rng = np.random.default_rng(0)
+    states = rng.uniform(-5, 5, size=(8, env.state_dim))
+    actions = rng.uniform(-5, 5, size=(8, env.action_dim))
+    ref = np.stack([env.f(states[i], actions[i]) for i in range(8)])
+    out = env.f_batch(
+        torch.tensor(states, dtype=torch.float64),
+        torch.tensor(actions, dtype=torch.float64),
+    )
+    assert torch.allclose(out, torch.tensor(ref), atol=1e-9)
+
+
+@CUDA
+def test_linear_system_f_batch_cpu_gpu_parity():
+    env = gym.make("LinearSystem-v0").unwrapped
+    s = torch.randn(8, env.state_dim, dtype=torch.float64)
+    a = torch.randn(8, env.action_dim, dtype=torch.float64)
+    out_cpu = env.f_batch(s, a)
+    out_gpu = env.f_batch(s.cuda(), a.cuda())
+    assert out_gpu.is_cuda
+    assert torch.allclose(out_cpu, out_gpu.cpu(), atol=1e-9)
+
+
+@CUDA
+def test_linear_system_cost_cpu_gpu_parity():
+    env = gym.make("LinearSystem-v0").unwrapped
+    s = torch.randn(8, env.state_dim, dtype=torch.float64)
+    a = torch.randn(3, env.action_dim, dtype=torch.float64)
+    c_cpu = env.vectorized_cost_fn(s, a)
+    c_gpu = env.vectorized_cost_fn(s.cuda(), a.cuda())
+    assert torch.allclose(c_cpu, c_gpu.cpu(), atol=1e-9)
