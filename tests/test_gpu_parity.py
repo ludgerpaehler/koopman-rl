@@ -126,3 +126,31 @@ def test_lorenz_f_batch_cpu_gpu_parity():
     out_gpu = env.f_batch(s.cuda(), a.cuda())
     assert out_gpu.is_cuda
     assert torch.allclose(out_cpu, out_gpu.cpu(), atol=1e-9)
+
+
+def test_double_well_drift_matches_numpy():
+    env = gym.make("DoubleWell-v0").unwrapped
+    env.reset(seed=0)
+    rng = np.random.default_rng(3)
+    states = rng.uniform(-2, 2, size=(8, env.state_dim))
+    actions = rng.uniform(-5, 5, size=(8, env.action_dim))
+    # numpy drift-only reference (diffusion term zeroed)
+    ref = np.stack([
+        states[i] + env.continuous_f(actions[i])(0, states[i]) * env.dt
+        for i in range(8)
+    ])
+    zero_noise = torch.zeros(8, env.state_dim, 1, dtype=torch.float64)
+    out = env.f_batch(torch.tensor(states), torch.tensor(actions), noise=zero_noise)
+    assert torch.allclose(out, torch.tensor(ref), atol=1e-9)
+
+
+@CUDA
+def test_double_well_drift_cpu_gpu_parity():
+    env = gym.make("DoubleWell-v0").unwrapped
+    s = torch.randn(8, env.state_dim, dtype=torch.float64)
+    a = torch.randn(8, env.action_dim, dtype=torch.float64)
+    zn = torch.zeros(8, env.state_dim, 1, dtype=torch.float64)
+    out_cpu = env.f_batch(s, a, noise=zn)
+    out_gpu = env.f_batch(s.cuda(), a.cuda(), noise=zn.cuda())
+    assert out_gpu.is_cuda
+    assert torch.allclose(out_cpu, out_gpu.cpu(), atol=1e-9)
