@@ -83,3 +83,25 @@ def test_linear_system_cost_cpu_gpu_parity():
     c_cpu = env.vectorized_cost_fn(s, a)
     c_gpu = env.vectorized_cost_fn(s.cuda(), a.cuda())
     assert torch.allclose(c_cpu, c_gpu.cpu(), atol=1e-9)
+
+
+def test_fluid_flow_rk4_matches_scipy_accuracy():
+    env = gym.make("FluidFlow-v0").unwrapped
+    rng = np.random.default_rng(1)
+    states = rng.uniform(-1, 1, size=(8, env.state_dim))
+    actions = rng.uniform(-2, 2, size=(8, env.action_dim))
+    ref = np.stack([env.f(states[i], actions[i]) for i in range(8)])  # scipy RK45
+    out = env.f_batch(torch.tensor(states), torch.tensor(actions))
+    # Looser integrator-accuracy tolerance (RK4 substeps vs adaptive RK45)
+    assert torch.allclose(out, torch.tensor(ref), atol=1e-4, rtol=1e-4)
+
+
+@CUDA
+def test_fluid_flow_f_batch_cpu_gpu_parity():
+    env = gym.make("FluidFlow-v0").unwrapped
+    s = torch.rand(8, env.state_dim, dtype=torch.float64)
+    a = torch.randn(8, env.action_dim, dtype=torch.float64)
+    out_cpu = env.f_batch(s, a)
+    out_gpu = env.f_batch(s.cuda(), a.cuda())
+    assert out_gpu.is_cuda
+    assert torch.allclose(out_cpu, out_gpu.cpu(), atol=1e-9)  # same RK4 both sides -> tight
