@@ -1,6 +1,5 @@
 from enum import Enum
 
-import numpy as np
 import torch
 
 torch.set_default_dtype(torch.float64)
@@ -44,6 +43,9 @@ def SINDy(Theta, dXdt, lamb=0.05):
 
 
 def ols(X, Y):
+    # On CUDA, lstsq only supports the gels (full-rank) driver and silently ignores
+    # rcond; for the full-rank inputs used here it matches the CPU solution to machine
+    # precision, so no special CUDA branch is needed. Keep the CPU path unchanged.
     return torch.linalg.lstsq(X, Y, rcond=None).solution
 
 
@@ -66,7 +68,8 @@ def RRR(X, Y, rank=8):
 
 
 def ridgeRegression(X, y, lamb=0.05):
-    return torch.linalg.inv(X.T @ X + (lamb * torch.eye(X.shape[1]))) @ X.T @ y
+    eye = torch.eye(X.shape[1], device=X.device, dtype=X.dtype)
+    return torch.linalg.inv(X.T @ X + lamb * eye) @ X.T @ y
 
 
 """ Regressor enum """
@@ -174,9 +177,10 @@ class KoopmanTensor:
         print("\n")
 
         # Build matrix of kronecker products between u_i and x_i for all 0 <= i <= N
-        self.kron_matrix = torch.empty([self.psi_dim * self.phi_dim, self.N])
-        for i in range(self.N):
-            self.kron_matrix[:, i] = torch.kron(self.Psi_U[:, i], self.Phi_X[:, i])
+        # torch.kron(Psi_U[:,i], Phi_X[:,i])[a*phi_dim + b] = Psi_U[a,i] * Phi_X[b,i]
+        self.kron_matrix = torch.einsum("an,bn->abn", self.Psi_U, self.Phi_X).reshape(
+            self.psi_dim * self.phi_dim, self.N
+        )
 
         # Solve for M and B
         if regressor == Regressor.RRR:
@@ -194,15 +198,11 @@ class KoopmanTensor:
         else:
             raise Exception("Did not pick a supported regression algorithm.")
 
-        # reshape M into tensor K
-        self.K = np.empty([self.phi_dim, self.phi_dim, self.psi_dim])
-        self.M = self.M.numpy()
-        for i in range(self.phi_dim):
-            self.K[i] = self.M[i].reshape((self.phi_dim, self.psi_dim), order="F")
-
-        # Cast to tensors
-        self.M = torch.tensor(self.M, dtype=torch.float64)
-        self.K = torch.tensor(self.K, dtype=torch.float64)
+        # reshape M into tensor K without leaving the device.
+        # The original used a per-row Fortran-order reshape of M[i] into (phi_dim, psi_dim);
+        # that equals the C-order reshape into (psi_dim, phi_dim) transposed.
+        self.M = self.M.contiguous()
+        self.K = self.M.reshape(self.phi_dim, self.psi_dim, self.phi_dim).transpose(-1, -2).contiguous()
 
     def K_(self, u):
         """
