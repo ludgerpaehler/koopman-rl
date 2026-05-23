@@ -154,3 +154,26 @@ def test_double_well_drift_cpu_gpu_parity():
     out_gpu = env.f_batch(s.cuda(), a.cuda(), noise=zn.cuda())
     assert out_gpu.is_cuda
     assert torch.allclose(out_cpu, out_gpu.cpu(), atol=1e-9)
+
+
+def test_double_well_diffusion_matches_numpy():
+    """Validate the full f_batch (drift + diffusion) against the numpy formula with injected noise."""
+    env = gym.make("DoubleWell-v0").unwrapped
+    rng = np.random.default_rng(7)
+    states = rng.uniform(-2, 2, size=(8, env.state_dim))
+    actions = rng.uniform(-5, 5, size=(8, env.action_dim))
+    noise = rng.standard_normal(size=(8, env.state_dim, 1))
+    # numpy reference: state + drift*dt + (sigma_x @ noise * sqrt(dt))[:,0]
+    ref = []
+    for i in range(8):
+        drift = np.array(env.continuous_f(actions[i])(0, states[i])) * env.dt
+        sigma_x = np.array([[0.7, states[i, 0]], [0.0, 0.5]])
+        diffusion = (sigma_x @ noise[i] * np.sqrt(env.dt))[:, 0]
+        ref.append(states[i] + drift + diffusion)
+    ref = np.stack(ref)
+    out = env.f_batch(
+        torch.tensor(states),
+        torch.tensor(actions),
+        noise=torch.tensor(noise),
+    )
+    assert torch.allclose(out, torch.tensor(ref), atol=1e-9)
