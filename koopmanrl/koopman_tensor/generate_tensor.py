@@ -1,4 +1,5 @@
 import gymnasium as gym
+import koopmanrl.environments  # noqa: F401 — register custom environments
 import matplotlib.pyplot as plt
 import numpy as np
 import torch

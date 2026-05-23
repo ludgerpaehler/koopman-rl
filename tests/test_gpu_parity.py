@@ -177,3 +177,20 @@ def test_double_well_diffusion_matches_numpy():
         noise=torch.tensor(noise),
     )
     assert torch.allclose(out, torch.tensor(ref), atol=1e-9)
+
+
+from koopmanrl.koopman_tensor.torch_tensor import generate_koopman_tensor
+
+
+@CUDA
+def test_generate_koopman_tensor_batched_gpu():
+    kt = generate_koopman_tensor(
+        env_id="Lorenz-v0", seed=0, num_paths=16, num_steps_per_path=20,
+        state_order=2, action_order=2, regressor="ols",
+        device=torch.device("cuda"),
+    )
+    assert kt.K.is_cuda
+    assert kt.X.shape[1] == 16 * 20
+    x = torch.randn(3, 5, dtype=torch.float64, device="cuda")
+    u = torch.randn(1, 5, dtype=torch.float64, device="cuda")
+    assert kt.f(x, u).is_cuda

@@ -1,6 +1,10 @@
 from enum import Enum
 
+import gymnasium as gym
+import numpy as np
 import torch
+
+from koopmanrl.koopman_tensor.observables.torch_observables import monomials
 
 torch.set_default_dtype(torch.float64)
 
@@ -270,3 +274,95 @@ class KoopmanTensor:
         """
 
         return self.B.T @ self.phi_f(x, u)
+
+
+def generate_koopman_tensor(
+    env_id, seed, num_paths, num_steps_per_path, state_order, action_order, regressor,
+    device=None, dtype=torch.float64,
+):
+    """
+    Generate a KoopmanTensor from rollouts of the given Gymnasium environment.
+
+    When ``device`` is CUDA and the environment exposes ``f_batch`` / ``reset_batch``,
+    all paths are rolled out in parallel on the GPU.  Otherwise a sequential gym loop
+    is used (CPU fallback / parity reference).
+
+    Parameters
+    ----------
+    env_id : str
+        Gymnasium environment ID (e.g. "Lorenz-v0").
+    seed : int
+        RNG seed used for the environment, action sampling, and torch.
+    num_paths : int
+        Number of independent rollout paths.
+    num_steps_per_path : int
+        Number of environment steps per path.
+    state_order : int
+        Monomial order for the state observable phi.
+    action_order : int
+        Monomial order for the action observable psi.
+    regressor : str
+        Regression method: one of "ols", "sindy", "rrr", "ridge".
+    device : torch.device or None
+        Target device.  Defaults to CPU.
+    dtype : torch.dtype
+        Floating-point dtype.  Defaults to torch.float64.
+
+    Returns
+    -------
+    KoopmanTensor
+        A fitted KoopmanTensor with all internal tensors on ``device``.
+    """
+    import koopmanrl.environments  # noqa: F401 (register custom envs)
+
+    device = device or torch.device("cpu")
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    env = gym.make(env_id)
+    env.reset(seed=seed)
+    env.action_space.seed(seed)
+    base = env.unwrapped
+
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.shape[0]
+
+    if device.type == "cuda" and hasattr(base, "f_batch"):
+        gen = torch.Generator(device=device).manual_seed(seed)
+        low = torch.as_tensor(env.action_space.low, device=device, dtype=dtype)
+        high = torch.as_tensor(env.action_space.high, device=device, dtype=dtype)
+        states = base.reset_batch(num_paths, device=device, dtype=dtype, generator=gen)
+        Xs, Ys, Us = [], [], []
+        for _ in range(num_steps_per_path):
+            actions = low + (high - low) * torch.rand(
+                num_paths, action_dim, device=device, dtype=dtype, generator=gen
+            )
+            next_states = base.f_batch(states, actions, generator=gen)
+            Xs.append(states)
+            Us.append(actions)
+            Ys.append(next_states)
+            states = next_states
+        X = torch.stack(Xs, dim=1).reshape(-1, state_dim).T
+        Y = torch.stack(Ys, dim=1).reshape(-1, state_dim).T
+        U = torch.stack(Us, dim=1).reshape(-1, action_dim).T
+    else:
+        X = torch.zeros((num_paths, num_steps_per_path, state_dim), dtype=dtype)
+        Y = torch.zeros_like(X)
+        U = torch.zeros((num_paths, num_steps_per_path, action_dim), dtype=dtype)
+        for p in range(num_paths):
+            state, _ = env.reset()
+            for s in range(num_steps_per_path):
+                X[p, s] = torch.as_tensor(state, dtype=dtype)
+                action = env.action_space.sample()
+                U[p, s] = torch.as_tensor(action, dtype=dtype)
+                state, _, _, _, _ = env.step(action)
+                Y[p, s] = torch.as_tensor(state, dtype=dtype)
+        n = num_paths * num_steps_per_path
+        X = X.reshape(n, state_dim).T.to(device)
+        Y = Y.reshape(n, state_dim).T.to(device)
+        U = U.reshape(n, action_dim).T.to(device)
+
+    kwargs = dict(phi=monomials(state_order), psi=monomials(action_order), regressor=Regressor(regressor))
+    try:
+        return KoopmanTensor(X, Y, U, dt=base.dt, **kwargs)
+    except Exception:
+        return KoopmanTensor(X, Y, U, **kwargs)
