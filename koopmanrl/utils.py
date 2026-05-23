@@ -3,6 +3,17 @@ import os
 from typing import Any
 
 import gymnasium as gym
+import torch
+
+
+def resolve_device(cuda: bool) -> torch.device:
+    """Return the CUDA device when requested and available, else CPU."""
+    return torch.device("cuda" if (cuda and torch.cuda.is_available()) else "cpu")
+
+
+def resolve_dtype(fp32: bool) -> torch.dtype:
+    """FP64 by default; FP32 when opted in (faster on consumer Blackwell)."""
+    return torch.float32 if fp32 else torch.float64
 
 
 def load_and_apply_config(
