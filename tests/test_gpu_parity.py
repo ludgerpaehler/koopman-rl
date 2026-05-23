@@ -105,3 +105,24 @@ def test_fluid_flow_f_batch_cpu_gpu_parity():
     out_gpu = env.f_batch(s.cuda(), a.cuda())
     assert out_gpu.is_cuda
     assert torch.allclose(out_cpu, out_gpu.cpu(), atol=1e-9)  # same RK4 both sides -> tight
+
+
+def test_lorenz_rk4_matches_scipy_accuracy():
+    env = gym.make("Lorenz-v0").unwrapped
+    rng = np.random.default_rng(2)
+    states = rng.uniform(-10, 10, size=(8, env.state_dim))
+    actions = rng.uniform(-20, 20, size=(8, env.action_dim))
+    ref = np.stack([env.f(states[i], actions[i]) for i in range(8)])
+    out = env.f_batch(torch.tensor(states), torch.tensor(actions))
+    assert torch.allclose(out, torch.tensor(ref), atol=1e-3, rtol=1e-3)
+
+
+@CUDA
+def test_lorenz_f_batch_cpu_gpu_parity():
+    env = gym.make("Lorenz-v0").unwrapped
+    s = torch.randn(8, env.state_dim, dtype=torch.float64) * 5
+    a = torch.randn(8, env.action_dim, dtype=torch.float64) * 5
+    out_cpu = env.f_batch(s, a)
+    out_gpu = env.f_batch(s.cuda(), a.cuda())
+    assert out_gpu.is_cuda
+    assert torch.allclose(out_cpu, out_gpu.cpu(), atol=1e-9)

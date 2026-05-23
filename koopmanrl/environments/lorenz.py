@@ -28,6 +28,7 @@ class Lorenz(gym.Env):
         # self.action_range = [-500.0, 500.0]
 
         self.dt = dt
+        self.n_substeps = 4
         self.max_episode_steps = max_episode_steps
 
         # Dynamics
@@ -94,13 +95,41 @@ class Lorenz(gym.Env):
         return -self.cost_fn(state, action)
 
     def vectorized_cost_fn(self, states, actions):
-        _states = (states - self.reference_point).T
-        mat = torch.diag(_states.T @ self.Q @ _states).unsqueeze(-1) + torch.pow(actions.T, 2) * self.R
-
+        Q = torch.as_tensor(self.Q, dtype=states.dtype, device=states.device)
+        R = torch.as_tensor(self.R, dtype=states.dtype, device=states.device)
+        ref = torch.as_tensor(self.reference_point, dtype=states.dtype, device=states.device)
+        _states = (states - ref).T
+        state_cost = torch.einsum("bi,ij,bj->b", _states.T, Q, _states.T).unsqueeze(-1)
+        mat = state_cost + torch.pow(actions.T, 2) * R
         return mat.T
 
     def vectorized_reward_fn(self, states, actions):
         return -self.vectorized_cost_fn(states, actions)
+
+    def _deriv_batch(self, states, actions):
+        x, y, z = states[:, 0], states[:, 1], states[:, 2]
+        u = actions[:, 0]
+        x_dot = self.sigma * (y - x) + u
+        y_dot = (self.rho - z) * x - y
+        z_dot = x * y - self.beta * z
+        return torch.stack([x_dot, y_dot, z_dot], dim=1)
+
+    def f_batch(self, states, actions, generator=None):
+        """Batched dynamics via substepped RK4 over a single dt. generator unused (deterministic)."""
+        h = self.dt / self.n_substeps
+        x = states
+        for _ in range(self.n_substeps):
+            k1 = self._deriv_batch(x, actions)
+            k2 = self._deriv_batch(x + 0.5 * h * k1, actions)
+            k3 = self._deriv_batch(x + 0.5 * h * k2, actions)
+            k4 = self._deriv_batch(x + h * k3, actions)
+            x = x + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+        return x
+
+    def reset_batch(self, n, device, dtype=torch.float64, generator=None):
+        low = torch.as_tensor(self.state_minimums, device=device, dtype=dtype)
+        high = torch.as_tensor(self.state_maximums, device=device, dtype=dtype)
+        return low + (high - low) * torch.rand(n, self.state_dim, device=device, dtype=dtype, generator=generator)
 
     def continuous_f(self, action=None):
         """
