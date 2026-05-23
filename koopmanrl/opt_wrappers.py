@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
+from koopmanrl.koopman_tensor.torch_tensor import generate_koopman_tensor
 from koopmanrl.soft_actor_koopman_critic import (
     Actor,
     ReplayBuffer,
@@ -17,9 +18,8 @@ from koopmanrl.soft_actor_koopman_critic import (
 )
 from koopmanrl.soft_koopman_value_iteration import (
     DiscreteKoopmanValueIterationPolicy,
-    generate_koopman_tensor,
 )
-from koopmanrl.utils import make_env, vector_infos_to_list
+from koopmanrl.utils import make_env, resolve_device, resolve_dtype, vector_infos_to_list
 
 
 def skvi_tuning_wrapper(
@@ -39,6 +39,8 @@ def skvi_tuning_wrapper(
     state_order=2,
     action_order=2,
     regressor_type="ols",
+    cuda=False,
+    fp32=False,
 ):
     """
     Function-based version of the soft Koopman value iteration algorithm for hyperparameter tuning.
@@ -55,8 +57,8 @@ def skvi_tuning_wrapper(
     episodic_lengths_list = []
     steps_per_seconds_list = []
 
-    # CPU-only execution
-    device = torch.device("cpu")
+    device = resolve_device(cuda)
+    torch.set_default_dtype(resolve_dtype(fp32))
 
     # TRY NOT TO MODIFY: seeding
     random.seed(seed)
@@ -75,6 +77,8 @@ def skvi_tuning_wrapper(
         state_order=state_order,
         action_order=action_order,
         regressor=regressor_type,
+        device=device,
+        dtype=resolve_dtype(fp32),
     )
 
     try:
@@ -89,7 +93,7 @@ def skvi_tuning_wrapper(
             stop=envs.single_action_space.high,
             num=number_of_actions,
         )
-    ).T
+    ).T.to(device)
 
     # Construct value iteration policy
     value_iteration_policy = DiscreteKoopmanValueIterationPolicy(
@@ -103,6 +107,7 @@ def skvi_tuning_wrapper(
         learning_rate=learning_rate,
         seed=seed,
         dt=dt,
+        device=device,
     )
 
     # Use Koopman tensor training data to train policy
@@ -179,6 +184,8 @@ def sakc_tuning_wrapper(
     state_order=2,
     action_order=2,
     regressor_type="ols",
+    cuda=False,
+    fp32=False,
 ):
     """
     Function-based version of the soft Koopman actor-critic algorithm, built for hyperparameter tuning.
@@ -212,8 +219,8 @@ def sakc_tuning_wrapper(
     torch.manual_seed(seed)
     torch.backends.cudnn.deterministic = is_torch_deterministic
 
-    # Running everything on CPU
-    device = torch.device("cpu")
+    device = resolve_device(cuda)
+    torch.set_default_dtype(resolve_dtype(fp32))
 
     # env setup
     envs = gym.vector.SyncVectorEnv([make_env(env_id, seed, 0, to_capture_video, run_name)])
@@ -230,6 +237,8 @@ def sakc_tuning_wrapper(
         state_order=state_order,
         action_order=action_order,
         regressor=regressor_type,
+        device=device,
+        dtype=resolve_dtype(fp32),
     )
     vf = SoftKoopmanVNetwork(koopman_tensor).to(device)
     vf_target = SoftKoopmanVNetwork(koopman_tensor).to(device)
@@ -317,6 +326,15 @@ def sakc_tuning_wrapper(
         if global_step > learning_starts:
             # Sample from replay buffer
             data = rb.sample(batch_size)
+            # SB3 ReplayBuffer always stores float32; cast to the network dtype (float64 by default).
+            net_dtype = next(actor.parameters()).dtype
+            data = data._replace(
+                observations=data.observations.to(net_dtype),
+                actions=data.actions.to(net_dtype),
+                next_observations=data.next_observations.to(net_dtype),
+                rewards=data.rewards.to(net_dtype),
+                dones=data.dones.to(net_dtype),
+            )
 
             # E_s_t~D [ 1/2 ( V_psi( s_t ) - E_a_t~pi_phi [ Q_theta( s_t, a_t ) - log pi_phi( a_t | s_t ) ] )^2 ]
             vf_values = vf(data.observations).view(-1)
