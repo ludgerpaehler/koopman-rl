@@ -11,3 +11,6 @@ saved_models/
 # Ignore visualization outputs
 figures/
 video_frames/
+
+# Ignore benchmark bytecode
+benchmarks/__pycache__/
