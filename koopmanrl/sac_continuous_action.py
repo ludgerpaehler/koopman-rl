@@ -116,8 +116,7 @@ def main():
     torch.manual_seed(sampled_seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
-    # Running everything on CPU
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
     envs = gym.vector.SyncVectorEnv([make_env(args.env_id, sampled_seed, 0, args.capture_video, run_name)])
@@ -206,6 +205,15 @@ def main():
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
             data = rb.sample(args.batch_size)
+            # SB3 ReplayBuffer always stores float32; cast to the network dtype (float64 by default).
+            net_dtype = next(actor.parameters()).dtype
+            data = data._replace(
+                observations=data.observations.to(dtype=net_dtype),
+                actions=data.actions.to(dtype=net_dtype),
+                next_observations=data.next_observations.to(dtype=net_dtype),
+                rewards=data.rewards.to(dtype=net_dtype),
+                dones=data.dones.to(dtype=net_dtype),
+            )
             with torch.no_grad():
                 next_state_actions, next_state_log_pi, _ = actor.get_action(data.next_observations)
                 qf1_next_target = qf1_target(data.next_observations, next_state_actions)
