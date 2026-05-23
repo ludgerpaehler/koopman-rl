@@ -98,7 +98,7 @@ def skvi_tuning_wrapper(
             stop=envs.single_action_space.high,
             num=number_of_actions,
         )
-    ).T.to(device)
+    ).T.to(device=device, dtype=resolve_dtype(fp32))
 
     # Construct value iteration policy
     value_iteration_policy = DiscreteKoopmanValueIterationPolicy(

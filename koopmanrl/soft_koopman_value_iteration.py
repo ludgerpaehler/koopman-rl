@@ -604,7 +604,7 @@ def main():
             stop=envs.single_action_space.high,
             num=args.num_actions,
         )
-    ).T.to(device)
+    ).T.to(device=device, dtype=resolve_dtype(args.fp32))
 
     # Construct value iteration policy
     value_iteration_policy = DiscreteKoopmanValueIterationPolicy(

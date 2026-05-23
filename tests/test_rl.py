@@ -94,3 +94,22 @@ def test_sac_v_cuda(env_id):
         [f"--env_id={env_id}", f"--total_timesteps={TOTAL_TIMESTEPS}", "--cuda"],
     )
     assert result.returncode == 0, result.stderr
+
+
+@cuda_only
+def test_skvi_fp32_cuda():
+    result = run_module(
+        "koopmanrl.soft_koopman_value_iteration",
+        [f"--env_id={ENVS[0]}", f"--total_timesteps={TOTAL_TIMESTEPS}", "--cuda", "--fp32"],
+        timeout=600,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@cuda_only
+def test_sakc_fp32_cuda():
+    result = run_module(
+        "koopmanrl.soft_actor_koopman_critic",
+        [f"--env_id={ENVS[0]}", f"--total_timesteps={TOTAL_TIMESTEPS}", "--cuda", "--fp32", "--learning_starts=500"],
+    )
+    assert result.returncode == 0, result.stderr
