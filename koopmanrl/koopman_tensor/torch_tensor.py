@@ -364,5 +364,5 @@ def generate_koopman_tensor(
     kwargs = dict(phi=monomials(state_order), psi=monomials(action_order), regressor=Regressor(regressor))
     try:
         return KoopmanTensor(X, Y, U, dt=base.dt, **kwargs)
-    except Exception:
+    except AttributeError:
         return KoopmanTensor(X, Y, U, **kwargs)

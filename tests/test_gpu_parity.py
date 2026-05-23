@@ -5,6 +5,7 @@ import numpy as np
 import koopmanrl.environments  # noqa: F401
 
 from koopmanrl.koopman_tensor.observables.torch_observables import monomials
+from koopmanrl.koopman_tensor.torch_tensor import KoopmanTensor, Regressor, generate_koopman_tensor
 
 CUDA = pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 ATOL = 1e-9
@@ -19,9 +20,6 @@ def test_monomials_cpu_gpu_parity():
     y_gpu = phi(x_gpu)
     assert y_gpu.is_cuda
     assert torch.allclose(y_cpu, y_gpu.cpu(), atol=ATOL)
-
-
-from koopmanrl.koopman_tensor.torch_tensor import KoopmanTensor, Regressor
 
 
 def _make_tensor(device):
@@ -177,9 +175,6 @@ def test_double_well_diffusion_matches_numpy():
         noise=torch.tensor(noise),
     )
     assert torch.allclose(out, torch.tensor(ref), atol=1e-9)
-
-
-from koopmanrl.koopman_tensor.torch_tensor import generate_koopman_tensor
 
 
 @CUDA
