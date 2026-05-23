@@ -19,7 +19,12 @@ from koopmanrl.soft_actor_koopman_critic import (
 from koopmanrl.soft_koopman_value_iteration import (
     DiscreteKoopmanValueIterationPolicy,
 )
-from koopmanrl.utils import make_env, resolve_device, resolve_dtype, vector_infos_to_list
+from koopmanrl.utils import (
+    make_env,
+    resolve_device,
+    resolve_dtype,
+    vector_infos_to_list,
+)
 
 
 def skvi_tuning_wrapper(

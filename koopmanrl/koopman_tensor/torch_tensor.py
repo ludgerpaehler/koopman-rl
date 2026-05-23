@@ -277,8 +277,15 @@ class KoopmanTensor:
 
 
 def generate_koopman_tensor(
-    env_id, seed, num_paths, num_steps_per_path, state_order, action_order, regressor,
-    device=None, dtype=torch.float64,
+    env_id,
+    seed,
+    num_paths,
+    num_steps_per_path,
+    state_order,
+    action_order,
+    regressor,
+    device=None,
+    dtype=torch.float64,
 ):
     """
     Generate a KoopmanTensor from rollouts of the given Gymnasium environment.
@@ -333,9 +340,7 @@ def generate_koopman_tensor(
         states = base.reset_batch(num_paths, device=device, dtype=dtype, generator=gen)
         Xs, Ys, Us = [], [], []
         for _ in range(num_steps_per_path):
-            actions = low + (high - low) * torch.rand(
-                num_paths, action_dim, device=device, dtype=dtype, generator=gen
-            )
+            actions = low + (high - low) * torch.rand(num_paths, action_dim, device=device, dtype=dtype, generator=gen)
             next_states = base.f_batch(states, actions, generator=gen)
             Xs.append(states)
             Us.append(actions)

@@ -31,7 +31,9 @@ class monomials(object):
         Evaluate all monomials of order up to p for all data points in x.
         """
         [d, m] = x.shape  # d = dimension of state space, m = number of test points
-        c = allMonomialPowers(d, self.p).to(device=x.device, dtype=x.dtype)  # matrix containing all powers for the monomials
+        c = allMonomialPowers(d, self.p).to(
+            device=x.device, dtype=x.dtype
+        )  # matrix containing all powers for the monomials
         n = c.shape[1]  # number of monomials
         y = torch.ones([n, m], device=x.device, dtype=x.dtype)
         for i in range(n):
@@ -44,7 +46,9 @@ class monomials(object):
         Compute partial derivatives for all data points in x.
         """
         [d, m] = x.shape  # d = dimension of state space, m = number of test points
-        c = allMonomialPowers(d, self.p).to(device=x.device, dtype=x.dtype)  # matrix containing all powers for the monomials
+        c = allMonomialPowers(d, self.p).to(
+            device=x.device, dtype=x.dtype
+        )  # matrix containing all powers for the monomials
         n = c.shape[1]  # number of monomials
         y = torch.zeros([n, d, m], device=x.device, dtype=x.dtype)
         for i in range(n):  # for all monomials
@@ -66,7 +70,9 @@ class monomials(object):
         Compute second order derivatives for all data points in x.
         """
         [d, m] = x.shape  # d = dimension of state space, m = number of test points
-        c = allMonomialPowers(d, self.p).to(device=x.device, dtype=x.dtype)  # matrix containing all powers for the monomials
+        c = allMonomialPowers(d, self.p).to(
+            device=x.device, dtype=x.dtype
+        )  # matrix containing all powers for the monomials
         n = c.shape[1]  # number of monomials
         y = torch.zeros([n, d, d, m], device=x.device, dtype=x.dtype)
         for i in range(n):  # for all monomials

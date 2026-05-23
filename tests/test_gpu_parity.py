@@ -1,11 +1,15 @@
-import pytest
-import torch
 import gymnasium as gym
 import numpy as np
-import koopmanrl.environments  # noqa: F401
+import pytest
+import torch
 
+import koopmanrl.environments  # noqa: F401
 from koopmanrl.koopman_tensor.observables.torch_observables import monomials
-from koopmanrl.koopman_tensor.torch_tensor import KoopmanTensor, Regressor, generate_koopman_tensor
+from koopmanrl.koopman_tensor.torch_tensor import (
+    KoopmanTensor,
+    Regressor,
+    generate_koopman_tensor,
+)
 
 CUDA = pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 ATOL = 1e-9
@@ -133,10 +137,7 @@ def test_double_well_drift_matches_numpy():
     states = rng.uniform(-2, 2, size=(8, env.state_dim))
     actions = rng.uniform(-5, 5, size=(8, env.action_dim))
     # numpy drift-only reference (diffusion term zeroed)
-    ref = np.stack([
-        states[i] + env.continuous_f(actions[i])(0, states[i]) * env.dt
-        for i in range(8)
-    ])
+    ref = np.stack([states[i] + env.continuous_f(actions[i])(0, states[i]) * env.dt for i in range(8)])
     zero_noise = torch.zeros(8, env.state_dim, 1, dtype=torch.float64)
     out = env.f_batch(torch.tensor(states), torch.tensor(actions), noise=zero_noise)
     assert torch.allclose(out, torch.tensor(ref), atol=1e-9)
@@ -180,8 +181,13 @@ def test_double_well_diffusion_matches_numpy():
 @CUDA
 def test_generate_koopman_tensor_batched_gpu():
     kt = generate_koopman_tensor(
-        env_id="Lorenz-v0", seed=0, num_paths=16, num_steps_per_path=20,
-        state_order=2, action_order=2, regressor="ols",
+        env_id="Lorenz-v0",
+        seed=0,
+        num_paths=16,
+        num_steps_per_path=20,
+        state_order=2,
+        action_order=2,
+        regressor="ols",
         device=torch.device("cuda"),
     )
     assert kt.K.is_cuda

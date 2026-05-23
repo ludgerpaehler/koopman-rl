@@ -1,4 +1,5 @@
 import torch
+
 from koopmanrl.utils import resolve_device, resolve_dtype
 
 

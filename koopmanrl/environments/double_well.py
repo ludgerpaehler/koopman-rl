@@ -118,7 +118,7 @@ class DoubleWell(gym.Env):
         sigma[:, 0, 0] = 0.7
         sigma[:, 0, 1] = x
         sigma[:, 1, 1] = 0.5
-        diffusion = torch.bmm(sigma, noise).squeeze(-1) * (dt ** 0.5)
+        diffusion = torch.bmm(sigma, noise).squeeze(-1) * (dt**0.5)
         return states + drift + diffusion
 
     def reset_batch(self, n, device, dtype=torch.float64, generator=None):

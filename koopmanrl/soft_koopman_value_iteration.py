@@ -11,7 +11,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 from koopmanrl.environments import DoubleWell, FluidFlow, LinearSystem, Lorenz
 from koopmanrl.koopman_observables import monomials
-from koopmanrl.koopman_tensor.torch_tensor import KoopmanTensor, Regressor, generate_koopman_tensor
+from koopmanrl.koopman_tensor.torch_tensor import (
+    KoopmanTensor,
+    generate_koopman_tensor,
+)
 from koopmanrl.utils import (
     create_folder,
     load_and_apply_config,
@@ -355,14 +358,12 @@ class DiscreteKoopmanValueIterationPolicy:
         pis_response = self.pis(x)[:, 0]
 
         if is_greedy:
-            selected_indices = torch.ones(
-                sample_size, dtype=torch.int8, device=self.device
-            ) * torch.argmax(pis_response)
+            selected_indices = torch.ones(sample_size, dtype=torch.int8, device=self.device) * torch.argmax(
+                pis_response
+            )
         else:
             selected_indices = torch.from_numpy(
-                np.random.choice(
-                    np.arange(len(pis_response)), size=sample_size, p=pis_response.detach().cpu().numpy()
-                )
+                np.random.choice(np.arange(len(pis_response)), size=sample_size, p=pis_response.detach().cpu().numpy())
             ).to(self.device)
 
         return (
