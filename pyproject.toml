@@ -59,6 +59,10 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
 ]
+pysr = [
+    "pysr>=1.0.0",
+    "sympy>=1.12",
+]
 
 [tool.ruff.lint]
 select = ["E", "F"]
