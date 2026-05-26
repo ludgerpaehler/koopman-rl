@@ -104,3 +104,44 @@ def test_sindy_handles_1d_target():
     y = torch.randn(40)
     Xi = sindy(X, y, threshold=0.0)
     assert Xi.shape == (3, 1)
+
+
+def _build_dataset():
+    g = torch.Generator().manual_seed(0)
+    n, state_dim, action_dim = 300, 2, 1
+    X = torch.randn(state_dim, n, generator=g)
+    A = torch.tensor([[0.9, 0.1], [-0.2, 0.8]])
+    Y = A @ X
+    U = torch.randn(action_dim, n, generator=g)
+    return X, Y, U, state_dim
+
+
+def test_koopman_tensor_sindy_end_to_end():
+    from koopmanrl.koopman_tensor.observables.torch_observables import monomials
+    from koopmanrl.koopman_tensor.torch_tensor import KoopmanTensor, Regressor
+
+    X, Y, U, state_dim = _build_dataset()
+    kt = KoopmanTensor(X, Y, U, phi=monomials(2), psi=monomials(2), regressor=Regressor.SINDy)
+    assert kt.K.shape == (kt.phi_dim, kt.phi_dim, kt.psi_dim)
+    x = torch.randn(state_dim, 8)
+    u = torch.randn(1, 8)
+    pred = kt.f(x, u)
+    assert pred.shape == (state_dim, 8)
+    assert torch.isfinite(pred).all()
+
+
+def test_koopman_tensor_accepts_regressor_kwargs():
+    from koopmanrl.koopman_tensor.observables.torch_observables import monomials
+    from koopmanrl.koopman_tensor.torch_tensor import KoopmanTensor, Regressor
+
+    X, Y, U, _ = _build_dataset()
+    kt = KoopmanTensor(
+        X,
+        Y,
+        U,
+        phi=monomials(2),
+        psi=monomials(2),
+        regressor=Regressor.SINDy,
+        regressor_kwargs={"threshold": 0.2, "alpha": 1e-3},
+    )
+    assert kt.K is not None
