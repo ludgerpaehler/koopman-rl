@@ -129,7 +129,8 @@ def pysr_regression(X, Y, **pysr_kwargs):
     Returns
     -------
     Xi : (n_features, n_targets) tensor
-        Linear coefficient matrix on ``X``'s dtype (CPU; PySR runs on numpy).
+        Linear coefficient matrix on ``X``'s device/dtype. PySR itself runs on numpy/CPU;
+        the returned tensor is moved back to ``X.device`` before returning.
     """
     try:
         from pysr import PySRRegressor
@@ -157,7 +158,7 @@ def pysr_regression(X, Y, **pysr_kwargs):
         niterations=20,
         binary_operators=["+", "*"],
         unary_operators=[],
-        maxsize=2 * n_features + 5,
+        maxsize=min(2 * n_features + 5, 40),
         progress=False,
         verbosity=0,
         random_state=0,
@@ -172,7 +173,7 @@ def pysr_regression(X, Y, **pysr_kwargs):
         model.fit(X_np, Y_np[:, j], variable_names=feature_names)
         coeffs = _extract_linear_coeffs(model.sympy(), feature_symbols)
         Xi[:, j] = torch.tensor(coeffs, dtype=X.dtype)
-    return Xi
+    return Xi.to(X.device)
 
 
 """ Regressor enum """
@@ -208,11 +209,11 @@ class KoopmanTensor:
             Dictionary space representing the states.
         psi : callable
             Dictionary space representing the actions.
-        regressor : {'ols', 'sindy', 'rrr'}, optional
+        regressor : {'ols', 'sindy', 'rrr', 'ridge', 'pysr'}, optional
             String indicating the regression method to use. Default is 'ols'.
         regressor_kwargs : dict, optional
-            Extra keyword arguments forwarded to the selected regressor (e.g. ``alpha`` for
-            ridge). Default is None (treated as an empty dict).
+            Extra keyword arguments forwarded to the selected regressor (e.g. ``niterations``
+            for ``pysr``). Default is None (treated as an empty dict).
         rank : int, optional
             Rank of the Koopman tensor when applying reduced rank regression. Default is 8.
         is_generator : bool, optional
