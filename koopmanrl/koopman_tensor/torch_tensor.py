@@ -118,7 +118,9 @@ class Regressor(str, Enum):
 
 
 class KoopmanTensor:
-    def __init__(self, X, Y, U, phi, psi, regressor=Regressor.OLS, rank=8, is_generator=False, dt=0.01):
+    def __init__(
+        self, X, Y, U, phi, psi, regressor=Regressor.OLS, rank=8, is_generator=False, dt=0.01, regressor_kwargs=None
+    ):
         """
         Create an instance of the KoopmanTensor class.
 
@@ -150,6 +152,7 @@ class KoopmanTensor:
         KoopmanTensor
             An instance of the KoopmanTensor class.
         """
+        regressor_kwargs = regressor_kwargs or {}
 
         # Save datasets
         self.X = X
@@ -225,8 +228,8 @@ class KoopmanTensor:
             self.M = ols(self.kron_matrix.T, self.regression_Y.T).T
             self.B = ols(self.Phi_X.T, self.X.T)
         elif regressor == Regressor.RIDGE:
-            self.M = ridgeRegression(self.kron_matrix.T, self.regression_Y.T).T
-            self.B = ridgeRegression(self.Phi_X.T, self.X.T)
+            self.M = ridge(self.kron_matrix.T, self.regression_Y.T, **regressor_kwargs).T
+            self.B = ridge(self.Phi_X.T, self.X.T, **regressor_kwargs)
         else:
             raise Exception("Did not pick a supported regression algorithm.")
 
