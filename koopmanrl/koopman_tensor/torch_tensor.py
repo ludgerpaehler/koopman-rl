@@ -183,13 +183,16 @@ class Regressor(str, Enum):
     SINDy = "sindy"
     RRR = "rrr"
     RIDGE = "ridge"
+    PYSR = "pysr"
 
 
 """ Koopman Tensor """
 
 
 class KoopmanTensor:
-    def __init__(self, X, Y, U, phi, psi, regressor=Regressor.OLS, rank=8, is_generator=False, dt=0.01):
+    def __init__(
+        self, X, Y, U, phi, psi, regressor=Regressor.OLS, rank=8, is_generator=False, dt=0.01, regressor_kwargs=None
+    ):
         """
         Create an instance of the KoopmanTensor class.
 
@@ -207,8 +210,9 @@ class KoopmanTensor:
             Dictionary space representing the actions.
         regressor : {'ols', 'sindy', 'rrr'}, optional
             String indicating the regression method to use. Default is 'ols'.
-        p_inv : bool, optional
-            Boolean indicating whether to use pseudo-inverse instead of regular inverse. Default is True.
+        regressor_kwargs : dict, optional
+            Extra keyword arguments forwarded to the selected regressor (e.g. ``alpha`` for
+            ridge). Default is None (treated as an empty dict).
         rank : int, optional
             Rank of the Koopman tensor when applying reduced rank regression. Default is 8.
         is_generator : bool, optional
@@ -221,6 +225,7 @@ class KoopmanTensor:
         KoopmanTensor
             An instance of the KoopmanTensor class.
         """
+        regressor_kwargs = regressor_kwargs or {}
 
         # Save datasets
         self.X = X
@@ -298,6 +303,9 @@ class KoopmanTensor:
         elif regressor == Regressor.RIDGE:
             self.M = ridgeRegression(self.kron_matrix.T, self.regression_Y.T).T
             self.B = ridgeRegression(self.Phi_X.T, self.X.T)
+        elif regressor == Regressor.PYSR:
+            self.M = pysr_regression(self.kron_matrix.T, self.regression_Y.T, **regressor_kwargs).T
+            self.B = pysr_regression(self.Phi_X.T, self.X.T, **regressor_kwargs)
         else:
             raise Exception("Did not pick a supported regression algorithm.")
 
