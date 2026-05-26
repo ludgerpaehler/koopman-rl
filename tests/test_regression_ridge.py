@@ -87,7 +87,12 @@ def test_koopman_tensor_ridge_accepts_alpha_kwarg():
 
     X, Y, U, _ = _build_dataset()
     kt = KoopmanTensor(
-        X, Y, U, phi=monomials(2), psi=monomials(2),
-        regressor=Regressor.RIDGE, regressor_kwargs={"alpha": 1.0},
+        X,
+        Y,
+        U,
+        phi=monomials(2),
+        psi=monomials(2),
+        regressor=Regressor.RIDGE,
+        regressor_kwargs={"alpha": 1.0},
     )
     assert kt.K is not None
