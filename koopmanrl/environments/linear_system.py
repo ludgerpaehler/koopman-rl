@@ -84,10 +84,24 @@ class LinearSystem(gym.Env):
         return -self.cost_fn(state, action)
 
     def vectorized_cost_fn(self, states, actions):
-        _states = (states - self.reference_point).T
-        mat = torch.diag(_states.T @ self.Q @ _states).unsqueeze(-1) + torch.pow(actions.T, 2) * self.R
-
+        Q = torch.as_tensor(self.Q, dtype=states.dtype, device=states.device)
+        R = torch.as_tensor(self.R, dtype=states.dtype, device=states.device)
+        ref = torch.as_tensor(self.reference_point, dtype=states.dtype, device=states.device)
+        _states = (states - ref).T
+        state_cost = torch.einsum("bi,ij,bj->b", _states.T, Q, _states.T).unsqueeze(-1)
+        mat = state_cost + torch.pow(actions.T, 2) * R
         return mat.T
+
+    def f_batch(self, states, actions, generator=None):
+        """Batched dynamics on (batch, state_dim) torch tensors. generator unused (deterministic)."""
+        A = torch.as_tensor(self.A, dtype=states.dtype, device=states.device)
+        B = torch.as_tensor(self.B, dtype=states.dtype, device=states.device)
+        return states @ A.T + actions @ B.T
+
+    def reset_batch(self, n, device, dtype=torch.float64, generator=None):
+        low = torch.as_tensor(self.state_minimums, device=device, dtype=dtype)
+        high = torch.as_tensor(self.state_maximums, device=device, dtype=dtype)
+        return low + (high - low) * torch.rand(n, self.state_dim, device=device, dtype=dtype, generator=generator)
 
     def vectorized_reward_fn(self, states, actions):
         return -self.vectorized_cost_fn(states, actions)

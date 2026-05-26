@@ -1,7 +1,6 @@
 import os
 import random
 import time
-from enum import Enum
 from typing import Optional
 
 import gymnasium as gym
@@ -12,7 +11,17 @@ from torch.utils.tensorboard import SummaryWriter
 
 from koopmanrl.environments import DoubleWell, FluidFlow, LinearSystem, Lorenz
 from koopmanrl.koopman_observables import monomials
-from koopmanrl.utils import create_folder, load_and_apply_config, make_env
+from koopmanrl.koopman_tensor.torch_tensor import (
+    KoopmanTensor,
+    generate_koopman_tensor,
+)
+from koopmanrl.utils import (
+    create_folder,
+    load_and_apply_config,
+    make_env,
+    resolve_device,
+    resolve_dtype,
+)
 
 torch.set_default_dtype(torch.float64)
 delta = torch.finfo(torch.float64).eps  # 2.220446049250313e-16
@@ -54,6 +63,7 @@ class ArgumentParser(Tap):
     seed: Optional[int] = None  # seed of the experiment; loaded from config if not set (default: 1)
     torch_deterministic: bool = True  # if toggled, `torch.backends.cudnn.deterministic=False` (default: True)
     cuda: bool = False  # if toggled, cuda will be enabled by default (default: True)
+    fp32: bool = False  # use float32 instead of float64 (default: False)
     env_id: Optional[str] = None  # id of the environment; loaded from config if not set (default: LinearSystem-v0)
     total_timesteps: Optional[int] = None  # total timesteps; loaded from config if not set (default: 50000)
     gamma: float = 0.99  # the discount factor gamma (default: 0.99)
@@ -71,333 +81,6 @@ class ArgumentParser(Tap):
     config_file: Optional[str] = None  # path to a JSON config file; CLI flags override file values
 
 
-def checkMatrixRank(X, name):
-    rank = torch.linalg.matrix_rank(X)
-    print(f"{name} matrix rank: {rank}")
-    if rank != X.shape[0]:
-        # raise ValueError(f"{name} matrix is not full rank ({rank} / {X.shape[0]})")
-        pass
-
-
-def checkConditionNumber(X, name, threshold=200):
-    cond_num = torch.linalg.cond(X)
-    print(f"Condition number of {name}: {cond_num}")
-    if cond_num > threshold:
-        # raise ValueError(f"Condition number of {name} is too large ({cond_num} > {threshold})")
-        pass
-
-
-def ols(X, Y):
-    return torch.linalg.lstsq(X, Y, rcond=None).solution
-
-
-def OLS(X, Y):
-    return ols(X, Y)
-
-
-def SINDy(Theta, dXdt, lamb=0.05):
-    d = dXdt.shape[1]
-    Xi = torch.linalg.lstsq(Theta, dXdt, rcond=None).solution  # Initial guess: Least-squares
-
-    for _ in range(10):
-        smallinds = torch.abs(Xi) < lamb  # Find small coefficients
-        Xi[smallinds] = 0  # and threshold
-        for ind in range(d):  # n is state dimension
-            biginds = smallinds[:, ind] == 0
-            # Regress dynamics onto remaining terms to find sparse Xi
-            Xi[biginds, ind] = torch.linalg.lstsq(Theta[:, biginds], dXdt[:, ind].unsqueeze(0).T, rcond=None).solution[
-                :, 0
-            ]
-
-    L = Xi
-    return L
-
-
-def rrr(X, Y, rank=8):
-    B_ols = ols(X, Y)  # if infeasible use GD (numpy CG)
-    U, S, V = torch.linalg.svd(Y.T @ X @ B_ols)
-    W = V[0:rank].T
-
-    B_rr = B_ols @ W @ W.T
-    L = B_rr  # .T
-    return L
-
-
-def RRR(X, Y, rank=8):
-    return rrr(X, Y, rank)
-
-
-def ridgeRegression(X, y, lamb=0.05):
-    return torch.linalg.inv(X.T @ X + (lamb * torch.eye(X.shape[1]))) @ X.T @ y
-
-
-class Regressor(str, Enum):
-    OLS = "ols"
-    SINDy = "sindy"
-    RRR = "rrr"
-    RIDGE = "ridge"
-
-
-class KoopmanTensor:
-    def __init__(
-        self,
-        X,
-        Y,
-        U,
-        phi,
-        psi,
-        regressor=Regressor.OLS,
-        rank=8,
-        is_generator=False,
-        dt=0.01,
-    ):
-        """
-        Create an instance of the KoopmanTensor class.
-
-        Parameters
-        ----------
-        X : array_like
-            States dataset used for training.
-        Y : array_like
-            Single-step forward states dataset used for training.
-        U : array_like
-            Actions dataset used for training.
-        phi : callable
-            Dictionary space representing the states.
-        psi : callable
-            Dictionary space representing the actions.
-        regressor : {'ols', 'sindy', 'rrr'}, optional
-            String indicating the regression method to use. Default is 'ols'.
-        p_inv : bool, optional
-            Boolean indicating whether to use pseudo-inverse instead of regular inverse. Default is True.
-        rank : int, optional
-            Rank of the Koopman tensor when applying reduced rank regression. Default is 8.
-        is_generator : bool, optional
-            Boolean indicating whether the model is a Koopman generator tensor. Default is False.
-        dt : float, optional
-            The time step of the system. Default is 0.01.
-
-        Returns
-        -------
-        KoopmanTensor
-            An instance of the KoopmanTensor class.
-        """
-
-        # Save datasets
-        self.X = X
-        self.Y = Y
-        self.U = U
-
-        # Extract dictionary/observable functions
-        self.phi = phi
-        self.psi = psi
-
-        # Get number of data points
-        self.N = self.X.shape[1]
-
-        # Construct Phi and Psi matrices
-        self.Phi_X = self.phi(X)
-        self.Phi_Y = self.phi(Y)
-        self.Psi_U = self.psi(U)
-
-        # Get dimensions
-        self.x_dim = self.X.shape[0]
-        self.u_dim = self.U.shape[0]
-        self.phi_dim = self.Phi_X.shape[0]
-        self.psi_dim = self.Psi_U.shape[0]
-        self.x_column_dim = (self.x_dim, 1)
-        self.u_column_dim = (self.u_dim, 1)
-        self.phi_column_dim = (self.phi_dim, 1)
-
-        # Update regression matrices if dealing with Koopman generator
-        if is_generator:
-            # Save delta time
-            self.dt = dt
-
-            # Update regression target
-            finite_differences = self.Y - self.X  # (self.x_dim, self.N)
-            phi_derivative = self.phi.diff(self.X)  # (self.phi_dim, self.x_dim, self.N)
-            phi_double_derivative = self.phi.ddiff(self.X)  # (self.phi_dim, self.x_dim, self.x_dim, self.N)
-            self.regression_Y = torch.einsum("os,pos->ps", finite_differences / self.dt, phi_derivative)
-            self.regression_Y += torch.einsum(
-                "ot,pots->ps",
-                0.5 * (finite_differences @ finite_differences.T) / self.dt,  # (state_dim, state_dim)
-                phi_double_derivative,
-            )
-        else:
-            # Set regression target to phi(Y)
-            self.regression_Y = self.Phi_Y
-
-        # Make sure data is full rank
-        checkMatrixRank(self.Phi_X, "Phi_X")
-        checkMatrixRank(self.regression_Y, "dPhi_Y" if is_generator else "Phi_Y")
-        checkMatrixRank(self.Psi_U, "Psi_U")
-        print("\n")
-
-        # Make sure condition numbers are small
-        checkConditionNumber(self.Phi_X, "Phi_X")
-        checkConditionNumber(self.regression_Y, "dPhi_Y" if is_generator else "Phi_Y")
-        checkConditionNumber(self.Psi_U, "Psi_U")
-        print("\n")
-
-        # Build matrix of kronecker products between u_i and x_i for all 0 <= i <= N
-        self.kron_matrix = torch.empty([self.psi_dim * self.phi_dim, self.N])
-        for i in range(self.N):
-            self.kron_matrix[:, i] = torch.kron(self.Psi_U[:, i], self.Phi_X[:, i])
-
-        # Solve for M and B
-        if regressor == Regressor.RRR:
-            self.M = rrr(self.kron_matrix.T, self.regression_Y.T, rank).T
-            self.B = rrr(self.Phi_X.T, self.X.T, rank)
-        elif regressor == Regressor.SINDy:
-            self.M = SINDy(self.kron_matrix.T, self.regression_Y.T).T
-            self.B = SINDy(self.Phi_X.T, self.X.T)
-        elif regressor == Regressor.OLS:
-            self.M = ols(self.kron_matrix.T, self.regression_Y.T).T
-            self.B = ols(self.Phi_X.T, self.X.T)
-        elif regressor == Regressor.RIDGE:
-            self.M = ridgeRegression(self.kron_matrix.T, self.regression_Y.T).T
-            self.B = ridgeRegression(self.Phi_X.T, self.X.T)
-        else:
-            raise Exception("Did not pick a supported regression algorithm.")
-
-        # reshape M into tensor K
-        self.K = np.empty([self.phi_dim, self.phi_dim, self.psi_dim])
-        self.M = self.M.numpy()
-        for i in range(self.phi_dim):
-            self.K[i] = self.M[i].reshape((self.phi_dim, self.psi_dim), order="F")
-
-        # Cast to tensors
-        self.M = torch.tensor(self.M, dtype=torch.float64)
-        self.K = torch.tensor(self.K, dtype=torch.float64)
-
-    def K_(self, u):
-        """
-        Compute the Koopman operator associated with a given action.
-
-        Parameters
-        ----------
-        u : array_like
-            Action as a column vector or matrix of column vectors for which the Koopman operator is computed.
-
-        Returns
-        -------
-        ndarray
-            Koopman operator corresponding to the given action.
-        """
-
-        K_u = torch.einsum("ijz,zk->kij", self.K, self.psi(u))
-
-        if K_u.shape[0] == 1:
-            return K_u[0]
-
-        return K_u
-
-    def phi_f(self, x, u):
-        """
-        Apply the Koopman tensor to push forward phi(x) x psi(u) to phi(x').
-
-        Parameters
-        ----------
-        x : array_like
-            State column vector(s).
-        u : array_like
-            Action column vector(s).
-
-        Returns
-        -------
-        ndarray
-            Transformed phi(x') column vector(s).
-        """
-
-        K_us = self.K_(u)  # (batch_size, phi_dim, phi_dim)
-        phi_x = self.phi(x)  # (phi_dim, batch_size)
-
-        if len(K_us.shape) == 2:
-            return K_us @ phi_x
-
-        phi_x_primes = (K_us @ phi_x.T.unsqueeze(-1)).squeeze(-1)
-        return phi_x_primes.T
-
-    def f(self, x, u):
-        """
-        Utilize the Koopman tensor to approximate the true dynamics f(x, u) and predict x'.
-
-        Parameters
-        ----------
-        x : array_like
-            State column vector(s).
-        u : array_like
-            Action column vector(s).
-
-        Returns
-        -------
-        ndarray
-            Predicted state column vector(s).
-        """
-
-        return self.B.T @ self.phi_f(x, u)
-
-
-def generate_koopman_tensor(env_id, seed, num_paths, num_steps_per_path, state_order, action_order, regressor):
-    # Set seeds and create environment
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    env = gym.make(env_id)
-    env.reset(seed=seed)
-    env.action_space.seed(seed)
-    env.observation_space.seed(seed)
-
-    # Collect data
-    state_dim = env.observation_space.shape
-    state_dim = 1 if len(state_dim) == 0 else state_dim[0]
-    action_dim = env.action_space.shape
-    action_dim = 1 if len(action_dim) == 0 else action_dim[0]
-    X = torch.zeros((num_paths, num_steps_per_path, state_dim))
-    Y = torch.zeros_like(X)
-    U = torch.zeros((num_paths, num_steps_per_path, action_dim))
-
-    for path_num in range(num_paths):
-        state, _ = env.reset()
-        for step_num in range(num_steps_per_path):
-            X[path_num, step_num] = torch.tensor(state)
-            action = env.action_space.sample()
-            U[path_num, step_num] = torch.tensor(action)
-
-            state, _, _, _, _ = env.step(action)
-            Y[path_num, step_num] = torch.tensor(state)
-
-    # Reshape data into matrices
-    total_num_datapoints = num_paths * num_steps_per_path
-    X = X.reshape(total_num_datapoints, state_dim).T
-    Y = Y.reshape(total_num_datapoints, state_dim).T
-    U = U.reshape(total_num_datapoints, action_dim).T
-
-    # Construct the Koopman tensor
-    try:
-        path_based_tensor = KoopmanTensor(
-            X,
-            Y,
-            U,
-            phi=monomials(state_order),
-            psi=monomials(action_order),
-            regressor=Regressor(regressor),
-            dt=env.dt,
-        )
-    except:  # noqa: E722
-        # Assume the error was because there is no dt for LinearSystem
-        path_based_tensor = KoopmanTensor(
-            X,
-            Y,
-            U,
-            phi=monomials(state_order),
-            psi=monomials(action_order),
-            regressor=Regressor(regressor),
-        )
-
-    return path_based_tensor
-
-
 class DiscreteKoopmanValueIterationPolicy:
     def __init__(
         self,
@@ -411,6 +94,7 @@ class DiscreteKoopmanValueIterationPolicy:
         use_ols=True,
         learning_rate=0.003,
         dt=None,
+        device=None,
     ):
         """
         Initialize DiscreteKoopmanValueIterationPolicy.
@@ -468,14 +152,17 @@ class DiscreteKoopmanValueIterationPolicy:
         self.dt = dt
         if self.dt is None:
             self.dt = 1.0
+        self.device = device if device is not None else torch.device("cpu")
 
         self.discount_factor = self.gamma**self.dt
 
         # Handle model initialization
         if self.use_ols:
-            self.value_function_weights = torch.zeros((self.dynamics_model.phi_dim, 1))
+            self.value_function_weights = torch.zeros((self.dynamics_model.phi_dim, 1), device=self.device)
         else:
-            self.value_function_weights = torch.zeros((self.dynamics_model.phi_dim, 1), requires_grad=True)
+            self.value_function_weights = torch.zeros(
+                (self.dynamics_model.phi_dim, 1), requires_grad=True, device=self.device
+            )
             self.value_function_optimizer = torch.optim.Adam([self.value_function_weights], lr=self.learning_rate)
 
     def load_model(
@@ -513,20 +200,16 @@ class DiscreteKoopmanValueIterationPolicy:
         """
 
         # Compute phi(x) for each x
-        phi_xs = self.dynamics_model.phi(xs.T)  # (dim_phi, batch_size)
+        phi_xs = self.dynamics_model.phi(xs.T)  # (phi_dim, batch)
 
-        # Compute phi(x') for all ( phi(x), action ) pairs and compute V(x')s
-        K_us = self.dynamics_model.K_(self.all_actions)  # (all_actions.shape[1], phi_dim, phi_dim)
-        phi_x_prime_batch = torch.zeros([self.all_actions.shape[1], self.dynamics_model.phi_dim, xs.shape[1]])
-        V_x_prime_batch = torch.zeros([self.all_actions.shape[1], xs.shape[1]])
-        for action_index in range(K_us.shape[0]):
-            phi_x_prime_hat_batch = K_us[action_index] @ phi_xs  # (dim_phi, batch_size)
-            phi_x_prime_batch[action_index] = phi_x_prime_hat_batch
-            V_x_prime_batch[action_index] = self.V_phi_x(phi_x_prime_batch[action_index])  # (1, batch_size)
-            #! Something is wrong here with value_function_continuous_action
+        # Compute phi(x') for all ( phi(x), action ) pairs and compute V(x')s (vectorized)
+        K_us = self.dynamics_model.K_(self.all_actions)  # (num_actions, phi_dim, phi_dim)
+        phi_x_prime_batch = torch.einsum("aij,jb->aib", K_us, phi_xs)  # (num_actions, phi_dim, batch)
+        w = self.value_function_weights.squeeze(-1)  # (phi_dim,)
+        V_x_prime_batch = torch.einsum("p,apb->ab", w, phi_x_prime_batch)  # (num_actions, batch)
 
         # Get costs indexed by the action and the state
-        costs = torch.Tensor(self.cost(xs, self.all_actions.T))  # (all_actions.shape[1], batch_size)
+        costs = self.cost(xs, self.all_actions.T)  # (num_actions, batch)
 
         # Compute policy distribution
         inner_pi_us_values = -(costs + self.discount_factor * V_x_prime_batch)  # (all_actions.shape[1], xs.shape[1])
@@ -592,7 +275,9 @@ class DiscreteKoopmanValueIterationPolicy:
         """
 
         # Get random sample of xs and phi(x)s from dataset
-        x_batch_indices = torch.from_numpy(np.random.choice(self.dynamics_model.X.shape[1], batch_size, replace=False))
+        x_batch_indices = torch.from_numpy(
+            np.random.choice(self.dynamics_model.X.shape[1], batch_size, replace=False)
+        ).to(self.device)
         x_batch = self.dynamics_model.X[:, x_batch_indices.long()]  # (X.shape[0], batch_size)
         phi_x_batch = self.dynamics_model.Phi_X[:, x_batch_indices.long()]  # (dim_phi, batch_size)
 
@@ -600,18 +285,13 @@ class DiscreteKoopmanValueIterationPolicy:
         V_xs = self.V_phi_x(phi_x_batch)  # (1, batch_size)
 
         # Get costs indexed by the action and the state
-        costs = torch.Tensor(self.cost(x_batch.T, self.all_actions.T))  # (all_actions.shape[1], batch_size)
+        costs = self.cost(x_batch.T, self.all_actions.T)  # (num_actions, batch)
 
-        # Compute phi(x') for all ( phi(x), action ) pairs and compute V(x')s
-        K_us = self.dynamics_model.K_(self.all_actions)  # (all_actions.shape[1], phi_dim, phi_dim)
-        phi_x_prime_batch = torch.zeros([self.all_actions.shape[1], self.dynamics_model.phi_dim, batch_size])
-        V_x_prime_batch = torch.zeros([self.all_actions.shape[1], batch_size])
-        for action_index in range(K_us.shape[0]):
-            phi_x_prime_hat_batch = K_us[action_index] @ phi_x_batch  # (dim_phi, batch_size)
-            # x_prime_hat_batch = self.dynamics_model.B.T @ phi_x_prime_hat_batch # (X.shape[0], batch_size)
-            phi_x_prime_batch[action_index] = phi_x_prime_hat_batch
-            # phi_x_prime_batch[action_index] = self.dynamics_model.phi(x_primes_hat) # (dim_phi, batch_size)
-            V_x_prime_batch[action_index] = self.V_phi_x(phi_x_prime_batch[action_index])  # (1, batch_size)
+        # Compute phi(x') for all ( phi(x), action ) pairs and compute V(x')s (vectorized)
+        K_us = self.dynamics_model.K_(self.all_actions)  # (num_actions, phi_dim, phi_dim)
+        phi_x_prime_batch = torch.einsum("aij,jb->aib", K_us, phi_x_batch)  # (num_actions, phi_dim, batch)
+        w = self.value_function_weights.squeeze(-1)  # (phi_dim,)
+        V_x_prime_batch = torch.einsum("p,apb->ab", w, phi_x_prime_batch)  # (num_actions, batch)
 
         # Compute policy distribution
         inner_pi_us_values = -(costs + self.discount_factor * V_x_prime_batch)  # (all_actions.shape[1], batch_size)
@@ -678,11 +358,13 @@ class DiscreteKoopmanValueIterationPolicy:
         pis_response = self.pis(x)[:, 0]
 
         if is_greedy:
-            selected_indices = torch.ones(sample_size, dtype=torch.int8) * torch.argmax(pis_response)
+            selected_indices = torch.ones(sample_size, dtype=torch.int8, device=self.device) * torch.argmax(
+                pis_response
+            )
         else:
             selected_indices = torch.from_numpy(
-                np.random.choice(np.arange(len(pis_response)), size=sample_size, p=pis_response)
-            )
+                np.random.choice(np.arange(len(pis_response)), size=sample_size, p=pis_response.detach().cpu().numpy())
+            ).to(self.device)
 
         return (
             self.all_actions[0][selected_indices.long()],
@@ -765,7 +447,7 @@ class DiscreteKoopmanValueIterationPolicy:
         self.discount_factor = self.gamma**self.dt
 
         # Compute initial Bellman error
-        BE = self.discrete_bellman_error(batch_size=batch_size * batch_scale).detach().numpy()
+        BE = self.discrete_bellman_error(batch_size=batch_size * batch_scale).detach().cpu().numpy()
         bellman_errors = [BE]
         print(f"Initial Bellman error: {BE}")
 
@@ -779,21 +461,18 @@ class DiscreteKoopmanValueIterationPolicy:
                 # Get random batch of X and Phi_X from tensor training data
                 x_batch_indices = torch.from_numpy(
                     np.random.choice(self.dynamics_model.X.shape[1], batch_size, replace=False)
-                )
+                ).to(self.device)
                 x_batch = self.dynamics_model.X[:, x_batch_indices.long()]  # (X.shape[0], batch_size)
                 phi_x_batch = self.dynamics_model.Phi_X[:, x_batch_indices.long()]  # (dim_phi, batch_size)
 
                 # Compute costs indexed by the action and the state
-                costs = torch.Tensor(self.cost(x_batch.T, self.all_actions.T))  # (all_actions.shape[1], batch_size)
+                costs = self.cost(x_batch.T, self.all_actions.T)  # (num_actions, batch)
 
-                # Compute V(x')s
-                K_us = self.dynamics_model.K_(self.all_actions)  # (all_actions.shape[1], phi_dim, phi_dim)
-                phi_x_prime_batch = torch.zeros((self.all_actions.shape[1], self.dynamics_model.phi_dim, batch_size))
-                V_x_prime_batch = torch.zeros((self.all_actions.shape[1], batch_size))
-                for action_index in range(phi_x_prime_batch.shape[0]):
-                    phi_x_prime_hat_batch = K_us[action_index] @ phi_x_batch  # (phi_dim, batch_size)
-                    phi_x_prime_batch[action_index] = phi_x_prime_hat_batch
-                    V_x_prime_batch[action_index] = self.V_phi_x(phi_x_prime_batch[action_index])  # (1, batch_size)
+                # Compute V(x')s (vectorized)
+                K_us = self.dynamics_model.K_(self.all_actions)  # (num_actions, phi_dim, phi_dim)
+                phi_x_prime_batch = torch.einsum("aij,jb->aib", K_us, phi_x_batch)  # (num_actions, phi_dim, batch)
+                w = self.value_function_weights.squeeze(-1)  # (phi_dim,)
+                V_x_prime_batch = torch.einsum("p,apb->ab", w, phi_x_prime_batch)  # (num_actions, batch)
 
                 # Compute policy distribution
                 inner_pi_us_values = -(
@@ -834,7 +513,7 @@ class DiscreteKoopmanValueIterationPolicy:
                     self.value_function_optimizer.step()
 
                 # Recompute Bellman error
-                BE = self.discrete_bellman_error(batch_size=batch_size * batch_scale).detach().numpy()
+                BE = self.discrete_bellman_error(batch_size=batch_size * batch_scale).detach().cpu().numpy()
                 bellman_errors.append(BE)
 
                 # Print epoch number
@@ -888,8 +567,9 @@ def main():
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
-    # CPU-only execution
-    device = torch.device("cpu")
+    # Resolve compute device and dtype from flags
+    device = resolve_device(args.cuda)
+    torch.set_default_dtype(resolve_dtype(args.fp32))
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -908,6 +588,8 @@ def main():
         state_order=args.state_order,
         action_order=args.action_order,
         regressor=args.regressor,
+        device=device,
+        dtype=resolve_dtype(args.fp32),
     )
 
     try:
@@ -922,7 +604,7 @@ def main():
             stop=envs.single_action_space.high,
             num=args.num_actions,
         )
-    ).T
+    ).T.to(device=device, dtype=resolve_dtype(args.fp32))
 
     # Construct value iteration policy
     value_iteration_policy = DiscreteKoopmanValueIterationPolicy(
@@ -936,6 +618,7 @@ def main():
         learning_rate=args.lr,
         seed=args.seed,
         dt=dt,
+        device=device,
     )
 
     # Use Koopman tensor training data to train policy

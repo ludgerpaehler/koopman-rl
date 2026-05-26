@@ -17,10 +17,11 @@ environments/
 
 ## Design Guide
 
-All four environments follow two guiding principles:
+All four environments follow these guiding principles:
 
 * All environments follow the Gymnasium API
-* Environments are allowed to run with FP64, and are run on CPU
+* The Gymnasium single-env API remains FP64/CPU and serves as the parity reference
+* Each environment additionally exposes batched, device-aware `f_batch`/`reset_batch` (substepped RK4 for FluidFlow/Lorenz, Euler-Maruyama for DoubleWell, linear algebra for LinearSystem) plus a device-aware `vectorized_cost_fn`, used for GPU data-generation and training
 
 ## Working Checklist
 

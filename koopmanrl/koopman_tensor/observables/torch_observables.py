@@ -31,12 +31,13 @@ class monomials(object):
         Evaluate all monomials of order up to p for all data points in x.
         """
         [d, m] = x.shape  # d = dimension of state space, m = number of test points
-        c = allMonomialPowers(d, self.p)  # matrix containing all powers for the monomials
+        c = allMonomialPowers(d, self.p).to(
+            device=x.device, dtype=x.dtype
+        )  # matrix containing all powers for the monomials
         n = c.shape[1]  # number of monomials
-        y = torch.ones([n, m])
+        y = torch.ones([n, m], device=x.device, dtype=x.dtype)
         for i in range(n):
             for j in range(d):
-                # y[i] = y[i] * torch.pow(x[j], c[j, i])
                 y[i] *= torch.pow(x[j], c[j, i])
         return y
 
@@ -45,19 +46,21 @@ class monomials(object):
         Compute partial derivatives for all data points in x.
         """
         [d, m] = x.shape  # d = dimension of state space, m = number of test points
-        c = allMonomialPowers(d, self.p)  # matrix containing all powers for the monomials
+        c = allMonomialPowers(d, self.p).to(
+            device=x.device, dtype=x.dtype
+        )  # matrix containing all powers for the monomials
         n = c.shape[1]  # number of monomials
-        y = torch.zeros([n, d, m])
+        y = torch.zeros([n, d, m], device=x.device, dtype=x.dtype)
         for i in range(n):  # for all monomials
             for j in range(d):  # for all dimensions
-                e = c[:, i].copy()  # exponents of ith monomial
+                e = c[:, i].clone()  # exponents of ith monomial
                 a = e[j]
                 e[j] = e[j] - 1  # derivative w.r.t. j
 
                 if torch.any(e < 0):
                     continue  # nothing to do, already zero
 
-                y[i, j, :] = a * torch.ones([1, m])
+                y[i, j, :] = a * torch.ones([1, m], device=x.device, dtype=x.dtype)
                 for k in range(d):
                     y[i, j, :] = y[i, j, :] * torch.pow(x[k, :], e[k])
         return y
@@ -67,13 +70,15 @@ class monomials(object):
         Compute second order derivatives for all data points in x.
         """
         [d, m] = x.shape  # d = dimension of state space, m = number of test points
-        c = allMonomialPowers(d, self.p)  # matrix containing all powers for the monomials
+        c = allMonomialPowers(d, self.p).to(
+            device=x.device, dtype=x.dtype
+        )  # matrix containing all powers for the monomials
         n = c.shape[1]  # number of monomials
-        y = torch.zeros([n, d, d, m])
+        y = torch.zeros([n, d, d, m], device=x.device, dtype=x.dtype)
         for i in range(n):  # for all monomials
             for j1 in range(d):  # for all dimensions
                 for j2 in range(d):  # for all dimensions
-                    e = c[:, i].copy()  # exponents of ith monomial
+                    e = c[:, i].clone()  # exponents of ith monomial
                     a = e[j1]
                     e[j1] = e[j1] - 1  # derivative w.r.t. j1
                     a *= e[j2]
@@ -82,7 +87,7 @@ class monomials(object):
                     if torch.any(e < 0):
                         continue  # nothing to do, already zero
 
-                    y[i, j1, j2, :] = a * torch.ones([1, m])
+                    y[i, j1, j2, :] = a * torch.ones([1, m], device=x.device, dtype=x.dtype)
                     for k in range(d):
                         y[i, j1, j2, :] = y[i, j1, j2, :] * torch.pow(x[k, :], e[k])
         return y

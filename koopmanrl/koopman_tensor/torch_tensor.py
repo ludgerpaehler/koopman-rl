@@ -1,7 +1,10 @@
 from enum import Enum
 
+import gymnasium as gym
 import numpy as np
 import torch
+
+from koopmanrl.koopman_tensor.observables.torch_observables import monomials
 
 torch.set_default_dtype(torch.float64)
 
@@ -44,6 +47,9 @@ def SINDy(Theta, dXdt, lamb=0.05):
 
 
 def ols(X, Y):
+    # On CUDA, lstsq only supports the gels (full-rank) driver and silently ignores
+    # rcond; for the full-rank inputs used here it matches the CPU solution to machine
+    # precision, so no special CUDA branch is needed. Keep the CPU path unchanged.
     return torch.linalg.lstsq(X, Y, rcond=None).solution
 
 
@@ -66,7 +72,8 @@ def RRR(X, Y, rank=8):
 
 
 def ridgeRegression(X, y, lamb=0.05):
-    return torch.linalg.inv(X.T @ X + (lamb * torch.eye(X.shape[1]))) @ X.T @ y
+    eye = torch.eye(X.shape[1], device=X.device, dtype=X.dtype)
+    return torch.linalg.inv(X.T @ X + lamb * eye) @ X.T @ y
 
 
 """ Regressor enum """
@@ -174,9 +181,10 @@ class KoopmanTensor:
         print("\n")
 
         # Build matrix of kronecker products between u_i and x_i for all 0 <= i <= N
-        self.kron_matrix = torch.empty([self.psi_dim * self.phi_dim, self.N])
-        for i in range(self.N):
-            self.kron_matrix[:, i] = torch.kron(self.Psi_U[:, i], self.Phi_X[:, i])
+        # torch.kron(Psi_U[:,i], Phi_X[:,i])[a*phi_dim + b] = Psi_U[a,i] * Phi_X[b,i]
+        self.kron_matrix = torch.einsum("an,bn->abn", self.Psi_U, self.Phi_X).reshape(
+            self.psi_dim * self.phi_dim, self.N
+        )
 
         # Solve for M and B
         if regressor == Regressor.RRR:
@@ -194,15 +202,11 @@ class KoopmanTensor:
         else:
             raise Exception("Did not pick a supported regression algorithm.")
 
-        # reshape M into tensor K
-        self.K = np.empty([self.phi_dim, self.phi_dim, self.psi_dim])
-        self.M = self.M.numpy()
-        for i in range(self.phi_dim):
-            self.K[i] = self.M[i].reshape((self.phi_dim, self.psi_dim), order="F")
-
-        # Cast to tensors
-        self.M = torch.tensor(self.M, dtype=torch.float64)
-        self.K = torch.tensor(self.K, dtype=torch.float64)
+        # reshape M into tensor K without leaving the device.
+        # The original used a per-row Fortran-order reshape of M[i] into (phi_dim, psi_dim);
+        # that equals the C-order reshape into (psi_dim, phi_dim) transposed.
+        self.M = self.M.contiguous()
+        self.K = self.M.reshape(self.phi_dim, self.psi_dim, self.phi_dim).transpose(-1, -2).contiguous()
 
     def K_(self, u):
         """
@@ -270,3 +274,100 @@ class KoopmanTensor:
         """
 
         return self.B.T @ self.phi_f(x, u)
+
+
+def generate_koopman_tensor(
+    env_id,
+    seed,
+    num_paths,
+    num_steps_per_path,
+    state_order,
+    action_order,
+    regressor,
+    device=None,
+    dtype=torch.float64,
+):
+    """
+    Generate a KoopmanTensor from rollouts of the given Gymnasium environment.
+
+    When ``device`` is CUDA and the environment exposes ``f_batch`` / ``reset_batch``,
+    all paths are rolled out in parallel on the GPU.  Otherwise a sequential gym loop
+    is used (CPU fallback / parity reference).
+
+    Parameters
+    ----------
+    env_id : str
+        Gymnasium environment ID (e.g. "Lorenz-v0").
+    seed : int
+        RNG seed used for the environment, action sampling, and torch.
+    num_paths : int
+        Number of independent rollout paths.
+    num_steps_per_path : int
+        Number of environment steps per path.
+    state_order : int
+        Monomial order for the state observable phi.
+    action_order : int
+        Monomial order for the action observable psi.
+    regressor : str
+        Regression method: one of "ols", "sindy", "rrr", "ridge".
+    device : torch.device or None
+        Target device.  Defaults to CPU.
+    dtype : torch.dtype
+        Floating-point dtype.  Defaults to torch.float64.
+
+    Returns
+    -------
+    KoopmanTensor
+        A fitted KoopmanTensor with all internal tensors on ``device``.
+    """
+    import koopmanrl.environments  # noqa: F401 (register custom envs)
+
+    device = device or torch.device("cpu")
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    env = gym.make(env_id)
+    env.reset(seed=seed)
+    env.action_space.seed(seed)
+    base = env.unwrapped
+
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.shape[0]
+
+    if device.type == "cuda" and hasattr(base, "f_batch"):
+        gen = torch.Generator(device=device).manual_seed(seed)
+        low = torch.as_tensor(env.action_space.low, device=device, dtype=dtype)
+        high = torch.as_tensor(env.action_space.high, device=device, dtype=dtype)
+        states = base.reset_batch(num_paths, device=device, dtype=dtype, generator=gen)
+        Xs, Ys, Us = [], [], []
+        for _ in range(num_steps_per_path):
+            actions = low + (high - low) * torch.rand(num_paths, action_dim, device=device, dtype=dtype, generator=gen)
+            next_states = base.f_batch(states, actions, generator=gen)
+            Xs.append(states)
+            Us.append(actions)
+            Ys.append(next_states)
+            states = next_states
+        X = torch.stack(Xs, dim=1).reshape(-1, state_dim).T
+        Y = torch.stack(Ys, dim=1).reshape(-1, state_dim).T
+        U = torch.stack(Us, dim=1).reshape(-1, action_dim).T
+    else:
+        X = torch.zeros((num_paths, num_steps_per_path, state_dim), dtype=dtype)
+        Y = torch.zeros_like(X)
+        U = torch.zeros((num_paths, num_steps_per_path, action_dim), dtype=dtype)
+        for p in range(num_paths):
+            state, _ = env.reset()
+            for s in range(num_steps_per_path):
+                X[p, s] = torch.as_tensor(state, dtype=dtype)
+                action = env.action_space.sample()
+                U[p, s] = torch.as_tensor(action, dtype=dtype)
+                state, _, _, _, _ = env.step(action)
+                Y[p, s] = torch.as_tensor(state, dtype=dtype)
+        n = num_paths * num_steps_per_path
+        X = X.reshape(n, state_dim).T.to(device)
+        Y = Y.reshape(n, state_dim).T.to(device)
+        U = U.reshape(n, action_dim).T.to(device)
+
+    kwargs = dict(phi=monomials(state_order), psi=monomials(action_order), regressor=Regressor(regressor))
+    try:
+        return KoopmanTensor(X, Y, U, dt=base.dt, **kwargs)
+    except AttributeError:
+        return KoopmanTensor(X, Y, U, **kwargs)

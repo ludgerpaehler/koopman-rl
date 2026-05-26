@@ -5,6 +5,7 @@ import torch
 from matplotlib.animation import FuncAnimation
 from tap import Tap
 
+import koopmanrl.environments  # noqa: F401 — register custom environments
 from koopmanrl.koopman_tensor.observables import torch_observables as observables
 from koopmanrl.koopman_tensor.torch_tensor import KoopmanTensor, Regressor
 from koopmanrl.koopman_tensor.utils import save_tensor

@@ -88,13 +88,43 @@ class DoubleWell(gym.Env):
         return -self.cost_fn(state, action)
 
     def vectorized_cost_fn(self, states, actions):
-        _states = (states - self.reference_point).T
-        mat = torch.diag(_states.T @ self.Q @ _states).unsqueeze(-1) + torch.pow(actions.T, 2) * self.R
-
+        Q = torch.as_tensor(self.Q, dtype=states.dtype, device=states.device)
+        R = torch.as_tensor(self.R, dtype=states.dtype, device=states.device)
+        ref = torch.as_tensor(self.reference_point, dtype=states.dtype, device=states.device)
+        _states = (states - ref).T
+        state_cost = torch.einsum("bi,ij,bj->b", _states.T, Q, _states.T).unsqueeze(-1)
+        mat = state_cost + torch.pow(actions.T, 2) * R
         return mat.T
 
     def vectorized_reward_fn(self, states, actions):
         return -self.vectorized_cost_fn(states, actions)
+
+    def _drift_batch(self, states, actions):
+        x, y = states[:, 0], states[:, 1]
+        u = actions[:, 0]
+        x_dot = 4 * x - 4 * x.pow(3) + u
+        y_dot = -2 * y + u
+        return torch.stack([x_dot, y_dot], dim=1)
+
+    def f_batch(self, states, actions, generator=None, noise=None):
+        """Batched Euler-Maruyama. noise: (batch, 2, 1) standard-normal draws; sampled if None."""
+        dt = self.dt
+        drift = self._drift_batch(states, actions) * dt
+        if noise is None:
+            noise = torch.randn(states.shape[0], 2, 1, device=states.device, dtype=states.dtype, generator=generator)
+        x = states[:, 0]
+        # sigma_x = [[0.7, x], [0, 0.5]] per-sample
+        sigma = torch.zeros(states.shape[0], 2, 2, device=states.device, dtype=states.dtype)
+        sigma[:, 0, 0] = 0.7
+        sigma[:, 0, 1] = x
+        sigma[:, 1, 1] = 0.5
+        diffusion = torch.bmm(sigma, noise).squeeze(-1) * (dt**0.5)
+        return states + drift + diffusion
+
+    def reset_batch(self, n, device, dtype=torch.float64, generator=None):
+        low = torch.as_tensor(self.state_minimums, device=device, dtype=dtype)
+        high = torch.as_tensor(self.state_maximums, device=device, dtype=dtype)
+        return low + (high - low) * torch.rand(n, self.state_dim, device=device, dtype=dtype, generator=generator)
 
     def continuous_f(self, action=None):
         """
