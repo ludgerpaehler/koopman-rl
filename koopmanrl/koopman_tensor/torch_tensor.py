@@ -67,8 +67,6 @@ def sindy(X, Y, threshold=0.05, alpha=0.0, max_iter=20):
 
     def _inner(A, b):
         # Solve min ||A w - b||^2 + alpha ||w||^2 for a single target column.
-        if A.shape[1] == 0:
-            return torch.zeros(0, device=A.device, dtype=A.dtype)
         if alpha == 0.0:
             return torch.linalg.lstsq(A, b.unsqueeze(1), rcond=None).solution[:, 0]
         eye = torch.eye(A.shape[1], device=A.device, dtype=A.dtype)
@@ -99,6 +97,7 @@ def sindy(X, Y, threshold=0.05, alpha=0.0, max_iter=20):
 
 
 # Backwards-compatible alias (mirrors the ols/OLS, rrr/RRR naming convention).
+# Note: the hyperparameter is now ``threshold=`` (the old ``lamb=`` keyword was removed).
 def SINDy(X, Y, **kwargs):
     return sindy(X, Y, **kwargs)
 
@@ -175,6 +174,9 @@ class KoopmanTensor:
             Boolean indicating whether the model is a Koopman generator tensor. Default is False.
         dt : float, optional
             The time step of the system. Default is 0.01.
+        regressor_kwargs : dict, optional
+            Extra keyword arguments forwarded to the selected regressor (e.g. ``threshold``,
+            ``alpha`` for SINDy). Default is None (treated as an empty dict).
 
         Returns
         -------

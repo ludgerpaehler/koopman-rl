@@ -2,8 +2,6 @@ import torch
 
 from koopmanrl.koopman_tensor.torch_tensor import sindy
 
-torch.manual_seed(0)
-
 
 def test_sindy_exact_sparse_recovery():
     """Clean data from a known sparse linear map is recovered exactly."""
