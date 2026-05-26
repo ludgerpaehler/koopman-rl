@@ -71,9 +71,37 @@ def RRR(X, Y, rank=8):
     return rrr(X, Y, rank)
 
 
-def ridgeRegression(X, y, lamb=0.05):
+def ridge(X, Y, alpha=0.05):
+    """
+    Ridge regression via the normal equations, solved without forming an
+    explicit inverse (numerically stable on ill-conditioned feature matrices).
+
+    Solves ``(X^T X + alpha I) Xi = X^T Y`` for ``Xi``.
+
+    Parameters
+    ----------
+    X : (n_samples, n_features) tensor
+    Y : (n_samples, n_targets) tensor
+        Regression targets (a 1-D target is treated as a single column).
+    alpha : float
+        L2 regularization strength (``alpha=0`` -> OLS).
+
+    Returns
+    -------
+    Xi : (n_features, n_targets) tensor
+        Coefficient matrix on ``X``'s device/dtype.
+    """
+    if Y.ndim == 1:
+        Y = Y.unsqueeze(1)
+    if alpha == 0.0:
+        return torch.linalg.lstsq(X, Y, rcond=None).solution
     eye = torch.eye(X.shape[1], device=X.device, dtype=X.dtype)
-    return torch.linalg.inv(X.T @ X + lamb * eye) @ X.T @ y
+    return torch.linalg.solve(X.T @ X + alpha * eye, X.T @ Y)
+
+
+# Backwards-compatible alias.
+def ridgeRegression(X, Y, alpha=0.05):
+    return ridge(X, Y, alpha=alpha)
 
 
 """ Regressor enum """
