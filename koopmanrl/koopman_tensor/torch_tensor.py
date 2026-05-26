@@ -28,22 +28,79 @@ def checkConditionNumber(X, name, threshold=200):
         pass
 
 
-def SINDy(Theta, dXdt, lamb=0.05):
-    d = dXdt.shape[1]
-    Xi = torch.linalg.lstsq(Theta, dXdt, rcond=None).solution  # Initial guess: Least-squares
+def sindy(X, Y, threshold=0.05, alpha=0.0, max_iter=20):
+    """
+    Sequentially thresholded least squares (STLSQ), following PySINDy practice.
 
-    for _ in range(10):
-        smallinds = torch.abs(Xi) < lamb  # Find small coefficients
-        Xi[smallinds] = 0  # and threshold
-        for ind in range(d):  # n is state dimension
-            biginds = smallinds[:, ind] == 0
-            # Regress dynamics onto remaining terms to find sparse Xi
-            Xi[biginds, ind] = torch.linalg.lstsq(Theta[:, biginds], dXdt[:, ind].unsqueeze(0).T, rcond=None).solution[
-                :, 0
-            ]
+    Solves ``Y ~= X @ Xi`` for a sparse coefficient matrix ``Xi`` by repeatedly
+    least-squares fitting and zeroing coefficients whose column-normalized
+    magnitude falls below ``threshold``. Column normalization makes ``threshold``
+    scale-invariant; the inner solve is optionally ridge-regularized by ``alpha``.
 
-    L = Xi
-    return L
+    Parameters
+    ----------
+    X : (n_samples, n_features) tensor
+        Feature library.
+    Y : (n_samples, n_targets) tensor
+        Regression targets (a 1-D target is treated as a single column).
+    threshold : float
+        Sparsity threshold applied to normalized coefficients (``0`` -> OLS).
+    alpha : float
+        Ridge regularization strength used inside each least-squares solve.
+    max_iter : int
+        Maximum number of thresholding iterations.
+
+    Returns
+    -------
+    Xi : (n_features, n_targets) tensor
+        Sparse coefficient matrix on ``X``'s device/dtype.
+    """
+    if Y.ndim == 1:
+        Y = Y.unsqueeze(1)
+    n_features = X.shape[1]
+    n_targets = Y.shape[1]
+
+    # Column-normalize the library so the threshold does not depend on feature scale.
+    col_norms = torch.linalg.norm(X, dim=0)
+    col_norms = torch.where(col_norms > 0, col_norms, torch.ones_like(col_norms))
+    Xn = X / col_norms
+
+    def _inner(A, b):
+        # Solve min ||A w - b||^2 + alpha ||w||^2 for a single target column.
+        if A.shape[1] == 0:
+            return torch.zeros(0, device=A.device, dtype=A.dtype)
+        if alpha == 0.0:
+            return torch.linalg.lstsq(A, b.unsqueeze(1), rcond=None).solution[:, 0]
+        eye = torch.eye(A.shape[1], device=A.device, dtype=A.dtype)
+        return torch.linalg.solve(A.T @ A + alpha * eye, A.T @ b)
+
+    # Initial least-squares fit on the normalized library.
+    Xi = torch.zeros(n_features, n_targets, device=X.device, dtype=X.dtype)
+    for j in range(n_targets):
+        Xi[:, j] = _inner(Xn, Y[:, j])
+
+    # Sequentially threshold and refit until the support stops changing.
+    prev_support = None
+    for _ in range(max_iter):
+        smallinds = torch.abs(Xi) < threshold
+        Xi[smallinds] = 0.0
+        support = ~smallinds
+        for j in range(n_targets):
+            biginds = support[:, j]
+            if biginds.any():
+                Xi[biginds, j] = _inner(Xn[:, biginds], Y[:, j])
+        if prev_support is not None and torch.equal(support, prev_support):
+            break
+        prev_support = support
+
+    # Undo column normalization: coefficients were fit against X / col_norms.
+    Xi = Xi / col_norms.unsqueeze(1)
+    return Xi
+
+
+# Backwards-compatible alias (mirrors the ols/OLS, rrr/RRR naming convention).
+def SINDy(X, Y, **kwargs):
+    return sindy(X, Y, **kwargs)
 
 
 def ols(X, Y):
