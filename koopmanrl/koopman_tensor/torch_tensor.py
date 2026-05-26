@@ -138,8 +138,9 @@ class KoopmanTensor:
             Dictionary space representing the actions.
         regressor : {'ols', 'sindy', 'rrr'}, optional
             String indicating the regression method to use. Default is 'ols'.
-        p_inv : bool, optional
-            Boolean indicating whether to use pseudo-inverse instead of regular inverse. Default is True.
+        regressor_kwargs : dict, optional
+            Extra keyword arguments forwarded to the selected regressor (e.g. ``alpha`` for
+            ridge). Default is None (treated as an empty dict).
         rank : int, optional
             Rank of the Koopman tensor when applying reduced rank regression. Default is 8.
         is_generator : bool, optional
@@ -315,6 +316,7 @@ def generate_koopman_tensor(
     state_order,
     action_order,
     regressor,
+    regressor_kwargs=None,
     device=None,
     dtype=torch.float64,
 ):
@@ -341,6 +343,8 @@ def generate_koopman_tensor(
         Monomial order for the action observable psi.
     regressor : str
         Regression method: one of "ols", "sindy", "rrr", "ridge".
+    regressor_kwargs : dict, optional
+        Extra keyword arguments forwarded to the selected regressor (e.g. ``alpha`` for ridge).
     device : torch.device or None
         Target device.  Defaults to CPU.
     dtype : torch.dtype
@@ -397,7 +401,12 @@ def generate_koopman_tensor(
         Y = Y.reshape(n, state_dim).T.to(device)
         U = U.reshape(n, action_dim).T.to(device)
 
-    kwargs = dict(phi=monomials(state_order), psi=monomials(action_order), regressor=Regressor(regressor))
+    kwargs = dict(
+        phi=monomials(state_order),
+        psi=monomials(action_order),
+        regressor=Regressor(regressor),
+        regressor_kwargs=regressor_kwargs,
+    )
     try:
         return KoopmanTensor(X, Y, U, dt=base.dt, **kwargs)
     except AttributeError:

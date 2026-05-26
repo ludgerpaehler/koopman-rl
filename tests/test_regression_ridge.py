@@ -32,7 +32,8 @@ def test_ridge_shrinks_coefficients_with_alpha():
 
 
 def test_ridge_is_stable_on_ill_conditioned_features():
-    """Near-collinear columns: ridge stays finite where naive inverse degrades."""
+    """Near-collinear columns: ridge returns a finite, well-bounded solution (regularization
+    keeps coefficients from blowing up on near-singular input)."""
     g = torch.Generator().manual_seed(3)
     base = torch.randn(100, 1, generator=g)
     X = torch.cat([base, base + 1e-9 * torch.randn(100, 1, generator=g), torch.randn(100, 2, generator=g)], dim=1)
@@ -40,6 +41,7 @@ def test_ridge_is_stable_on_ill_conditioned_features():
     Xi = ridge(X, Y, alpha=1.0)
     assert Xi.shape == (4, 2)
     assert torch.isfinite(Xi).all()
+    assert torch.linalg.norm(Xi) < 1e3  # regularized solution stays bounded
 
 
 def test_ridge_contract_shape_and_dtype():
@@ -86,13 +88,25 @@ def test_koopman_tensor_ridge_accepts_alpha_kwarg():
     from koopmanrl.koopman_tensor.torch_tensor import KoopmanTensor, Regressor
 
     X, Y, U, _ = _build_dataset()
-    kt = KoopmanTensor(
-        X,
-        Y,
-        U,
-        phi=monomials(2),
-        psi=monomials(2),
-        regressor=Regressor.RIDGE,
+    common = dict(phi=monomials(2), psi=monomials(2), regressor=Regressor.RIDGE)
+    kt_default = KoopmanTensor(X, Y, U, **common)
+    kt_strong = KoopmanTensor(X, Y, U, regressor_kwargs={"alpha": 100.0}, **common)
+    assert kt_strong.K is not None
+    # A large alpha must measurably change the learned operator.
+    assert not torch.allclose(kt_default.M, kt_strong.M)
+
+
+def test_generate_koopman_tensor_threads_regressor_kwargs():
+    from koopmanrl.koopman_tensor.torch_tensor import generate_koopman_tensor
+
+    kt = generate_koopman_tensor(
+        env_id="LinearSystem-v0",
+        seed=0,
+        num_paths=10,
+        num_steps_per_path=20,
+        state_order=2,
+        action_order=2,
+        regressor="ridge",
         regressor_kwargs={"alpha": 1.0},
     )
     assert kt.K is not None
