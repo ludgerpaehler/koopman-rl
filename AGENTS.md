@@ -3,10 +3,9 @@
 Use this note as the entry point before touching the repository. It points to the canonical module guides and highlights the conventions that apply everywhere.
 
 ## Read First
-- `configurations/AGENTS.md` -
-- `scripts/AGENTS.md` -
-- `src/koopmanrl/AGENTS.md` -
-- `tests/AGENTS.md` -
+- [configurations/AGENTS.md](configurations/AGENTS.md) - algorithm hyperparameter configurations.
+- [koopmanrl/AGENTS.md](koopmanrl/AGENTS.md) - algorithm entry points and source navigation.
+- [koopmanrl/koopman_tensor/AGENTS.md](koopmanrl/koopman_tensor/AGENTS.md) - Koopman construction, tensor contracts, backends, and RL consumers.
 
 ## Global Conventions
 - Reinforcement learning core logic has to stay script-addressable through `python -m ..`.
@@ -16,8 +15,8 @@ Use this note as the entry point before touching the repository. It points to th
 ## Repository Layout
 ```
 configurations/          best hyperparameter configurations for the algorithms as JSON files
-scripts/                 utility scripts which reproduce the results from the paper
-src/koopmanrl/           core library including the two subfolders environments/, and koopman_tensor/
+koopmanrl/               core library including the two subfolders environments/, and koopman_tensor/
+koopmanrl_utils/         post-processing and visualization utilities
 tests/                   regression tests and unit tests for the library's core functionality
 ```
 
