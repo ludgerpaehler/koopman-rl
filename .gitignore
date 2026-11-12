@@ -11,3 +11,7 @@ saved_models/
 # Ignore visualization outputs
 figures/
 video_frames/
+
+# Ignore orb-local environments and portal metadata
+.venv/
+.amp/portals/*

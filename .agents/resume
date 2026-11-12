@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This project has no services or authentication to restore. Python, .venv,
+# and tool caches persist in the snapshot; leave dependency installs to setup.
