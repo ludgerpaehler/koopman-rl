@@ -71,9 +71,37 @@ def RRR(X, Y, rank=8):
     return rrr(X, Y, rank)
 
 
-def ridgeRegression(X, y, lamb=0.05):
+def ridge(X, Y, alpha=0.05):
+    """
+    Ridge regression via the normal equations, solved without forming an
+    explicit inverse (numerically stable on ill-conditioned feature matrices).
+
+    Solves ``(X^T X + alpha I) Xi = X^T Y`` for ``Xi``.
+
+    Parameters
+    ----------
+    X : (n_samples, n_features) tensor
+    Y : (n_samples, n_targets) tensor
+        Regression targets (a 1-D target is treated as a single column).
+    alpha : float
+        L2 regularization strength (``alpha=0`` -> OLS).
+
+    Returns
+    -------
+    Xi : (n_features, n_targets) tensor
+        Coefficient matrix on ``X``'s device/dtype.
+    """
+    if Y.ndim == 1:
+        Y = Y.unsqueeze(1)
+    if alpha == 0.0:
+        return torch.linalg.lstsq(X, Y, rcond=None).solution
     eye = torch.eye(X.shape[1], device=X.device, dtype=X.dtype)
-    return torch.linalg.inv(X.T @ X + lamb * eye) @ X.T @ y
+    return torch.linalg.solve(X.T @ X + alpha * eye, X.T @ Y)
+
+
+# Backwards-compatible alias.
+def ridgeRegression(X, Y, alpha=0.05):
+    return ridge(X, Y, alpha=alpha)
 
 
 """ Regressor enum """
@@ -90,7 +118,9 @@ class Regressor(str, Enum):
 
 
 class KoopmanTensor:
-    def __init__(self, X, Y, U, phi, psi, regressor=Regressor.OLS, rank=8, is_generator=False, dt=0.01):
+    def __init__(
+        self, X, Y, U, phi, psi, regressor=Regressor.OLS, rank=8, is_generator=False, dt=0.01, regressor_kwargs=None
+    ):
         """
         Create an instance of the KoopmanTensor class.
 
@@ -108,8 +138,9 @@ class KoopmanTensor:
             Dictionary space representing the actions.
         regressor : {'ols', 'sindy', 'rrr'}, optional
             String indicating the regression method to use. Default is 'ols'.
-        p_inv : bool, optional
-            Boolean indicating whether to use pseudo-inverse instead of regular inverse. Default is True.
+        regressor_kwargs : dict, optional
+            Extra keyword arguments forwarded to the selected regressor (e.g. ``alpha`` for
+            ridge). Default is None (treated as an empty dict).
         rank : int, optional
             Rank of the Koopman tensor when applying reduced rank regression. Default is 8.
         is_generator : bool, optional
@@ -122,6 +153,7 @@ class KoopmanTensor:
         KoopmanTensor
             An instance of the KoopmanTensor class.
         """
+        regressor_kwargs = regressor_kwargs or {}
 
         # Save datasets
         self.X = X
@@ -197,8 +229,8 @@ class KoopmanTensor:
             self.M = ols(self.kron_matrix.T, self.regression_Y.T).T
             self.B = ols(self.Phi_X.T, self.X.T)
         elif regressor == Regressor.RIDGE:
-            self.M = ridgeRegression(self.kron_matrix.T, self.regression_Y.T).T
-            self.B = ridgeRegression(self.Phi_X.T, self.X.T)
+            self.M = ridge(self.kron_matrix.T, self.regression_Y.T, **regressor_kwargs).T
+            self.B = ridge(self.Phi_X.T, self.X.T, **regressor_kwargs)
         else:
             raise Exception("Did not pick a supported regression algorithm.")
 
@@ -284,6 +316,7 @@ def generate_koopman_tensor(
     state_order,
     action_order,
     regressor,
+    regressor_kwargs=None,
     device=None,
     dtype=torch.float64,
 ):
@@ -310,6 +343,8 @@ def generate_koopman_tensor(
         Monomial order for the action observable psi.
     regressor : str
         Regression method: one of "ols", "sindy", "rrr", "ridge".
+    regressor_kwargs : dict, optional
+        Extra keyword arguments forwarded to the selected regressor (e.g. ``alpha`` for ridge).
     device : torch.device or None
         Target device.  Defaults to CPU.
     dtype : torch.dtype
@@ -366,7 +401,12 @@ def generate_koopman_tensor(
         Y = Y.reshape(n, state_dim).T.to(device)
         U = U.reshape(n, action_dim).T.to(device)
 
-    kwargs = dict(phi=monomials(state_order), psi=monomials(action_order), regressor=Regressor(regressor))
+    kwargs = dict(
+        phi=monomials(state_order),
+        psi=monomials(action_order),
+        regressor=Regressor(regressor),
+        regressor_kwargs=regressor_kwargs,
+    )
     try:
         return KoopmanTensor(X, Y, U, dt=base.dt, **kwargs)
     except AttributeError:
