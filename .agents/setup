@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+echo "==> Ensuring uv is available"
+if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+uv --version
+
+echo "==> Installing Python 3.10"
+time uv python install 3.10
+
+echo "==> Syncing locked runtime and development dependencies"
+time uv sync --locked --group dev
+
+echo "==> Preparing cached pre-commit environments (without installing Git hooks)"
+time uv run --no-sync pre-commit install-hooks
+
+echo "==> Orb setup ready; use uv run for project commands"
