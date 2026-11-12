@@ -39,7 +39,7 @@ koopmanrl/
 ## Critical Patterns
 
 * The main algorithms of the KoopmanRL package are `sakc_optuna_opt`, `skvi_optuna_opt`, `soft_actor_koopman_critic`, and `soft_koopman_value_iteration`.
-* If possible, when working with the Koopman tensor make sure to inherit as much as possible from either the `opt_wrappers`, or the `koopman_tensor` directory. All the core logic is represented in the `opt_wrappers`.
+* For Koopman construction, shape contracts, backend differences, and RL usage, read [koopman_tensor/AGENTS.md](koopman_tensor/AGENTS.md). Reuse `koopman_tensor.torch_tensor.generate_koopman_tensor` for training data and fitting; `opt_wrappers.py` orchestrates tuning and reuses the policy/network classes from the standalone algorithms.
 * When implementing new hyperparameter optimization logic, utilize Ray tune functionality as well as possible.
 * `linear_quadratic_regulator`, `sac_continuous_action`, and `value_based_sac_continuous_action` are inherited from other libraries and should be left untouched, and not be considered when designing new functionality.
 
