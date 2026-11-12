@@ -76,6 +76,106 @@ def ridgeRegression(X, y, lamb=0.05):
     return torch.linalg.inv(X.T @ X + lamb * eye) @ X.T @ y
 
 
+def _extract_linear_coeffs(expression, feature_symbols):
+    """
+    Read the linear coefficient of each feature symbol from a sympy expression.
+
+    Constant and nonlinear (cross / higher-order) terms are dropped, so a feature
+    that appears only nonlinearly -- or not at all -- contributes 0.
+
+    Parameters
+    ----------
+    expression : sympy.Expr
+        The discovered symbolic expression.
+    feature_symbols : list of sympy.Symbol
+        Feature symbols, in the order of the columns of the feature matrix.
+
+    Returns
+    -------
+    list of float
+        Linear coefficients aligned with ``feature_symbols``.
+    """
+    import sympy
+
+    expr = sympy.expand(expression)
+    coeffs = []
+    for sym in feature_symbols:
+        # coeff(sym, 1) is the multiplier of sym^1; it may still depend on other
+        # features (e.g. for a cross term x_i*x_j), so keep only its feature-free part.
+        raw = expr.coeff(sym, 1)
+        const_part, _ = raw.as_independent(*feature_symbols, as_Add=True)
+        coeffs.append(float(const_part))
+    return coeffs
+
+
+def pysr_regression(X, Y, **pysr_kwargs):
+    """
+    Symbolic-regression backend: fit each target column with PySR and assemble a
+    linear coefficient matrix by extracting per-feature linear coefficients from
+    the discovered expressions (keeping ``M`` linear so the Koopman tensor stays
+    intact).
+
+    Requires the optional ``pysr`` dependency (Julia backend). Raises a clear
+    ImportError if it is unavailable.
+
+    Parameters
+    ----------
+    X : (n_samples, n_features) tensor
+    Y : (n_samples, n_targets) tensor
+        Regression targets (a 1-D target is treated as a single column).
+    **pysr_kwargs
+        Overrides forwarded to ``PySRRegressor`` (e.g. ``niterations``).
+
+    Returns
+    -------
+    Xi : (n_features, n_targets) tensor
+        Linear coefficient matrix on ``X``'s device/dtype. PySR itself runs on numpy/CPU;
+        the returned tensor is moved back to ``X.device`` before returning.
+    """
+    try:
+        from pysr import PySRRegressor
+    except ImportError as e:
+        raise ImportError(
+            "The 'pysr' regression backend requires the optional 'pysr' dependency "
+            "(and a Julia runtime). Install it with `uv sync --group pysr`."
+        ) from e
+    import sympy
+
+    if Y.ndim == 1:
+        Y = Y.unsqueeze(1)
+    n_features = X.shape[1]
+    n_targets = Y.shape[1]
+
+    X_np = X.detach().cpu().numpy()
+    Y_np = Y.detach().cpu().numpy()
+
+    feature_names = [f"x{i}" for i in range(n_features)]
+    feature_symbols = [sympy.Symbol(name) for name in feature_names]
+
+    # Defaults bias the search toward small, affine-in-features models and make
+    # runs deterministic; callers may override any of these via pysr_kwargs.
+    defaults = dict(
+        niterations=20,
+        binary_operators=["+", "*"],
+        unary_operators=[],
+        maxsize=min(2 * n_features + 5, 40),
+        progress=False,
+        verbosity=0,
+        random_state=0,
+        deterministic=True,
+        parallelism="serial",
+    )
+    defaults.update(pysr_kwargs)
+
+    Xi = torch.zeros(n_features, n_targets, dtype=X.dtype)
+    for j in range(n_targets):
+        model = PySRRegressor(**defaults)
+        model.fit(X_np, Y_np[:, j], variable_names=feature_names)
+        coeffs = _extract_linear_coeffs(model.sympy(), feature_symbols)
+        Xi[:, j] = torch.tensor(coeffs, dtype=X.dtype)
+    return Xi.to(X.device)
+
+
 """ Regressor enum """
 
 
@@ -84,13 +184,16 @@ class Regressor(str, Enum):
     SINDy = "sindy"
     RRR = "rrr"
     RIDGE = "ridge"
+    PYSR = "pysr"
 
 
 """ Koopman Tensor """
 
 
 class KoopmanTensor:
-    def __init__(self, X, Y, U, phi, psi, regressor=Regressor.OLS, rank=8, is_generator=False, dt=0.01):
+    def __init__(
+        self, X, Y, U, phi, psi, regressor=Regressor.OLS, rank=8, is_generator=False, dt=0.01, regressor_kwargs=None
+    ):
         """
         Create an instance of the KoopmanTensor class.
 
@@ -106,10 +209,11 @@ class KoopmanTensor:
             Dictionary space representing the states.
         psi : callable
             Dictionary space representing the actions.
-        regressor : {'ols', 'sindy', 'rrr'}, optional
+        regressor : {'ols', 'sindy', 'rrr', 'ridge', 'pysr'}, optional
             String indicating the regression method to use. Default is 'ols'.
-        p_inv : bool, optional
-            Boolean indicating whether to use pseudo-inverse instead of regular inverse. Default is True.
+        regressor_kwargs : dict, optional
+            Extra keyword arguments forwarded to the selected regressor (e.g. ``niterations``
+            for ``pysr``). Default is None (treated as an empty dict).
         rank : int, optional
             Rank of the Koopman tensor when applying reduced rank regression. Default is 8.
         is_generator : bool, optional
@@ -122,6 +226,7 @@ class KoopmanTensor:
         KoopmanTensor
             An instance of the KoopmanTensor class.
         """
+        regressor_kwargs = regressor_kwargs or {}
 
         # Save datasets
         self.X = X
@@ -199,6 +304,9 @@ class KoopmanTensor:
         elif regressor == Regressor.RIDGE:
             self.M = ridgeRegression(self.kron_matrix.T, self.regression_Y.T).T
             self.B = ridgeRegression(self.Phi_X.T, self.X.T)
+        elif regressor == Regressor.PYSR:
+            self.M = pysr_regression(self.kron_matrix.T, self.regression_Y.T, **regressor_kwargs).T
+            self.B = pysr_regression(self.Phi_X.T, self.X.T, **regressor_kwargs)
         else:
             raise Exception("Did not pick a supported regression algorithm.")
 
